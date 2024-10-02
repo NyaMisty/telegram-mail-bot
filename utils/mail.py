@@ -1,3 +1,4 @@
+from typing import List, Optional, Tuple
 from pyzmail import PyzMessage, decode_text # type: ignore
 from pyzmail.parse import MailPart # type: ignore
 
@@ -53,12 +54,12 @@ class Email(object):
         mainbody = self.text
         if not self.text or len(self.text) < 20: # not like a real email
             mainbody = self.html or self.text or ''
-        retfiles = []
+        retfiles: List[Tuple[Optional[str], Optional[str], Optional[bytes]]] = []
         if self.additional_parts:
             mainbody += f'\n\nAdditional Parts:\n'
             for part in self.additional_parts:
                 part: MailPart
-                part_name = part.get_filename()
+                part_name = part.filename
                 part_content = part.get_payload()
                 mainbody += f'- {part_name} ({part.type}, size {len(part_content)})'
                 retfiles.append((part_name, part.type, part_content))
