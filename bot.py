@@ -79,6 +79,9 @@ def _help(update: Update, context: CallbackContext) -> None:
     /do_oauth john.doe@microsoft-organization.com ms-org
 
 /list_email
+例：
+    列出邮箱：/list_email
+    列出邮箱添加指令：/list_email 1
 /del_email john.doe@example.com
 /help get help
 
@@ -113,8 +116,15 @@ def setting_list_email(update: Update, context: CallbackContext) -> None:
         pwd = emailConf.email_passwd
         if hidePassword:
             pwd =  len(emailConf.email_passwd) * '*'
-        msg += f"    Email: {emailConf.email_addr}, Password: {pwd}, Server: {emailConf.server_uri}, SMTP Server: {emailConf.smtp_server_uri}, InboxNum: {emailConf.inbox_num}\n"
-    update.message.reply_text(msg)
+        if hidePassword:
+            msg += f"    Email: `{emailConf.email_addr}`, Server: `{emailConf.server_uri}`, SMTP Server: `{emailConf.smtp_server_uri}`, InboxNum: {emailConf.inbox_num}\n"
+        else:
+            addCommand = f'/add_email {emailConf.email_addr} {emailConf.email_passwd} {emailConf.server_uri} {emailConf.smtp_server_uri}'
+            msg += f"    Command: `{addCommand}`\n"
+    safeSendText(
+        lambda text: update.message.reply_markdown_v2(text), # type: ignore[has-type]
+        msg
+    )
 
 def setting_do_oauth(update: Update, context: CallbackContext):
     if not is_owner(update):
