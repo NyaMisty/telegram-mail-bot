@@ -96,6 +96,10 @@ def setting_list_email(update: Update, context: CallbackContext) -> None:
     if not is_owner(update):
         return
     
+    hidePassword = True
+    if context.args:
+        hidePassword = False
+        
     msg = 'Email Account List:\n'
     for emailConfDict in emailDB.getAll():
         try:
@@ -103,7 +107,10 @@ def setting_list_email(update: Update, context: CallbackContext) -> None:
         except Exception:
             msg += "    (Invalid Email Account: %s)\n" % emailConfDict
             continue
-        msg += f"    Email: {emailConf.email_addr}, Password: {len(emailConf.email_passwd) * '*'}, Server: {emailConf.server_uri}, SMTP Server: {emailConf.smtp_server_uri}, InboxNum: {emailConf.inbox_num}\n"
+        pwd = emailConf.email_passwd
+        if hidePassword:
+            pwd =  len(emailConf.email_passwd) * '*'
+        msg += f"    Email: {emailConf.email_addr}, Password: {pwd}, Server: {emailConf.server_uri}, SMTP Server: {emailConf.smtp_server_uri}, InboxNum: {emailConf.inbox_num}\n"
     update.message.reply_text(msg)
 
 def setting_add_email(update: Update, context: CallbackContext) -> None:
