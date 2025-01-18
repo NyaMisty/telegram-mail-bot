@@ -73,7 +73,10 @@ def _help(update: Update, context: CallbackContext) -> None:
     /add_email john.doe@hotmail.com code:ms:XX_authorization_code_XXX imaps://outlook.office365.com smtp+starttls://smtp-mail.outlook.com
     /add_email john.doe@gmail.com password imaps://imap.gmail.com:993 smtps://smtp.gmail.com
     
-    use this URL to get auth code: https://login.microsoftonline.com/common/oauth2/v2.0/authorize?response_type=code&client_id={OAuth2_MS.client_id}&redirect_uri=https%3A%2F%2Flocalhost&scope=https%3A%2F%2Foutlook.office.com%2FIMAP.AccessAsUser.All+https%3A%2F%2Foutlook.office.com%2FPOP.AccessAsUser.All+https%3A%2F%2Foutlook.office.com%2FSMTP.Send+offline_access
+/do_oauth john.doe@example.com [provider]
+返回OAuth登录链接，例：
+    /do_oauth john.doe@hotmail.com
+    /do_oauth john.doe@microsoft-organization.com ms-org
 
 /list_email
 /del_email john.doe@example.com
@@ -112,6 +115,28 @@ def setting_list_email(update: Update, context: CallbackContext) -> None:
             pwd =  len(emailConf.email_passwd) * '*'
         msg += f"    Email: {emailConf.email_addr}, Password: {pwd}, Server: {emailConf.server_uri}, SMTP Server: {emailConf.smtp_server_uri}, InboxNum: {emailConf.inbox_num}\n"
     update.message.reply_text(msg)
+
+def setting_do_oauth(update: Update, context: CallbackContext):
+    if not is_owner(update):
+        return
+    if not context.args:
+        update.message.reply_text("Invalid command!")
+        return
+    email_addr = context.args[0]
+    oauth_type = None
+    if len(context.args) >= 2:
+        oauth_type = context.args[1]
+    
+    if not oauth_type:
+        oauth_type = OAuth2Factory.detect_provider(email_addr)
+        if not oauth_type:
+            update.message.reply_text("Cannot autodetect oauth provider for email %s, please specify the provider." % email_addr)
+            return
+
+    oauthProvider = OAuth2Factory.get_provider(oauth_type)
+    url = oauthProvider.get_login_url(email_addr)
+    update.message.reply_markdown_v2(f"OAuth2 Provider: {oauth_type}\n\nUsing this url to login: `{url}`\nOr [click here]({url})")
+    return
 
 def setting_add_email(update: Update, context: CallbackContext) -> None:
     if not is_owner(update):
@@ -430,6 +455,7 @@ def main():
     #
     #  Add command handler to set email address and account.
     dp.add_handler(CommandHandler("list_email", setting_list_email))
+    dp.add_handler(CommandHandler("do_oauth", setting_do_oauth))
     dp.add_handler(CommandHandler("add_email", setting_add_email))
     dp.add_handler(CommandHandler("del_email", setting_del_email))
     dp.add_handler(MessageHandler(Filters.reply, handle_reply_send_email))

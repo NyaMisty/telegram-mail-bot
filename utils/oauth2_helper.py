@@ -2,6 +2,7 @@ import logging
 import time
 import re
 import requests
+import urllib.parse
 from base64 import b64encode
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,18 @@ class OAuth2_Base():
     token_uri: str
     client_id: str
     redirect_uri: str
+    
+    suffix_list: list[str]
+    @classmethod
+    def can_handle_email(self, email):
+        for suffix in self.suffix_list:
+            if email.endswith(suffix):
+                return True
+        return False
+
+    @classmethod
+    def get_login_url(self, email):
+        raise NotImplementedError()
     
     @classmethod
     def refresh_token_from_code(self, code):
@@ -119,6 +132,12 @@ class OAuth2Factory():
         return self.PROVIDERS_DICT[name]
 
     @classmethod
+    def detect_provider(self, email):
+        for name, provider in self.PROVIDERS_DICT.items():
+            if provider.can_handle_email(email):
+                return name
+
+    @classmethod
     def token_from_string(self, s) -> Token | None:
         # s should have format token:{provider}:{refresh_token}
         if not s.startswith('token:'):
@@ -164,11 +183,32 @@ class OAuth2_MS(OAuth2_Base):
     # misty
     client_id = '55797b5d-1e14-44bc-a7b3-52575eb1d6ef'
     redirect_uri = 'https://localhost'
+    suffix_list = ['@outlook.com', '@hotmail.com', '@msn.com', '@live.com']
+    @classmethod
+    def get_login_url(self, email):
+        return f'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?response_type=code&client_id={self.client_id}&redirect_uri=https%3A%2F%2Flocalhost&scope=https%3A%2F%2Foutlook.office.com%2FIMAP.AccessAsUser.All+https%3A%2F%2Foutlook.office.com%2FPOP.AccessAsUser.All+https%3A%2F%2Foutlook.office.com%2FSMTP.Send+offline_access'
 
 OAuth2Factory.register_provider(OAuth2_MS)
 
 class OAuth2_MSOrg(OAuth2_MS):
     name = 'ms-org'
     token_uri = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
+    suffix_list = []
 
 OAuth2Factory.register_provider(OAuth2_MSOrg)
+
+class OAuth2_MailRu(OAuth2_Base):
+    name = 'mailru'
+    token_uri = 'https://o2.mail.ru/token'
+    redirect_uri = 'http://localhost'
+
+    # client_id = 'thebat'
+    client_id = 'thunderbird'
+    client_secret = 'I0dCAXrcaNFujaaY'
+    suffix_list = ['@mail.ru', '@inbox.ru', '@bk.ru', '@list.ru', '@internet.ru', '@xmail.ru', ]
+    @classmethod
+    def get_login_url(self, email):
+        # return f'https://o2.mail.ru/login?scope=mail.imap%20userinfo&client_id=thebat&redirect_uri=http%3A%2F%2Flocalhost&login={urllib.parse.quote_plus(email)}&state=get_auth&response_type=code&approval_prompt=auto'
+        return f'https://o2.mail.ru/login?response_type=code&client_id=thunderbird&redirect_uri=http%3A%2F%2Flocalhost&scope=mail.imap&login_hint={urllib.parse.quote_plus(email)}'
+
+OAuth2Factory.register_provider(OAuth2_MailRu)
