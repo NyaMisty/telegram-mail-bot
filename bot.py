@@ -353,9 +353,12 @@ def periodic_task() -> None:
                 if email_addr not in PERIODIC_TASK_ERRORS:
                     PERIODIC_TASK_ERRORS[email_addr] = {}
                 exceptionStr = str(e)
+                # for exceptions like "server returned invalid status %d, body: %s", we merge them into one category
+                if ':' in exceptionStr[:100]:
+                    exceptionStr = exceptionStr[:100].split(':')[0]
                 if exceptionStr not in PERIODIC_TASK_ERRORS[email_addr]:
                     PERIODIC_TASK_ERRORS[email_addr][exceptionStr] = []
-                PERIODIC_TASK_ERRORS[email_addr][exceptionStr].append(format_exc())
+                PERIODIC_TASK_ERRORS[email_addr][exceptionStr].append((f'{type(e).__name__}: {str(e)}', format_exc()))
             logger.warning('periodic task error in %s', email_addr, exc_info=True)
     
     # for emailConfDict in emailDB.getAll():
@@ -369,40 +372,49 @@ def periodic_task() -> None:
 LAST_ERROR_REPORT_TIME: float | None = None
 LAST_ERROR_REPORT_TICK = 0
 def periodic_task_error_report():
-    global PERIODIC_TASK_ERRORS, LAST_ERROR_REPORT_TIME, LAST_ERROR_REPORT_TICK
-    
-    last_errors = PERIODIC_TASK_ERRORS
-    logger.info("last errors (%s - %s): %s", LAST_ERROR_REPORT_TIME, time.time(), last_errors)
-    
-    queries = PERIODIC_TASK_TICK - LAST_ERROR_REPORT_TICK
+    try:
+        global PERIODIC_TASK_ERRORS, LAST_ERROR_REPORT_TIME, LAST_ERROR_REPORT_TICK
+        
+        last_errors = PERIODIC_TASK_ERRORS
+        queries = PERIODIC_TASK_TICK - LAST_ERROR_REPORT_TICK
+        
+        last_errors_simplified = {k: {k1: '(%d errors)' % len(v1) for k1,v1 in v.items()} for k,v in last_errors.items()}
+        logger.info("last errors (%s - %s, %d queries): %s", LAST_ERROR_REPORT_TIME, time.time(), queries, last_errors_simplified)
 
-    if LAST_ERROR_REPORT_TIME is not None:
-        time_since_last_report = str(datetime.datetime.now() - datetime.datetime.fromtimestamp(Conf.LAST_ERROR_REPORT_TIME))
-    else:
-        time_since_last_report = str(datetime.timedelta(seconds=Conf.ERR_REPORT_INTERVAL))    
+        seconds_since_last_report = Conf.ERR_REPORT_INTERVAL
+        if LAST_ERROR_REPORT_TIME is not None:
+            seconds_since_last_report = int(time.time() - LAST_ERROR_REPORT_TIME)
+        time_since_last_report = str(datetime.timedelta(seconds=seconds_since_last_report))
 
-    LAST_ERROR_REPORT_TICK = PERIODIC_TASK_TICK
-    LAST_ERROR_REPORT_TIME = time.time()
-    PERIODIC_TASK_ERRORS = {}
-    
-    if not last_errors:
-        logger.info("No errors since last error report, skipping this report!")
-        return
-    
-    text = ''
-    for acc, accErrDict in last_errors.items():
-        if sum(len(errList) for errList in accErrDict.values()) < queries * 0.5:
-            # to avoid spamming, we only print error summary if this account has MASSIVE amount of errors
-            text += f'Acc: {acc}\n'
-            for errType, errList in accErrDict.items():
-                text += f'    Error: {errType}, triggered {len(errList)} times\n'
-    if not text:
-        logger.info("No account have massive errors, skipping this report!")
-    text = f'''Error Summary during last {queries} queries in duration {time_since_last_report}:\n''' + text
-    safeSendText(
-        lambda text: updater.bot.send_message(chat_id=Conf.OWNER_CHAT_ID, text=text), # type: ignore[has-type]
-        text
-    )
+        LAST_ERROR_REPORT_TICK = PERIODIC_TASK_TICK
+        LAST_ERROR_REPORT_TIME = time.time()
+        PERIODIC_TASK_ERRORS = {}
+        
+        if not last_errors:
+            logger.info("No errors since last error report, skipping this report!")
+            return
+        
+        text = ''
+        for acc, accErrDict in last_errors.items():
+            accTotalErrs = sum(len(errList) for errList in accErrDict.values())
+            if accTotalErrs > queries * 0.5:
+                # to avoid spamming, we only print error summary if this account has MASSIVE amount of errors
+                text += f'\nAcc: {acc}\n'
+                for errType, errList in accErrDict.items():
+                    text += f'    Error: {errList[0][0]}, triggered {len(errList)} times\n'
+            else:
+                logger.info("Acc %s's err is occasional (%d vs %d), ignoring", acc, accTotalErrs, queries)
+        if not text:
+            logger.info("No account have massive errors, skipping this report!")
+            return
+        logger.info("Error summary this round: %s", text)
+        text = f'''Error Summary during last {queries} queries in duration {time_since_last_report}:\n''' + text
+        safeSendText(
+            lambda text: updater.bot.send_message(chat_id=Conf.OWNER_CHAT_ID, text=text), # type: ignore[has-type]
+            text
+        )
+    except Exception:
+        logger.error('Error in periodic_task_error_report:', exc_info=True)
 
 def is_reply_to_bot(update: Update, context: CallbackContext) -> bool:
     assert update.message
