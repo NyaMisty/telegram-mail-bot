@@ -13,6 +13,7 @@ class Conf:
     POLL_INTERVAL: int = 60
     ERR_REPORT_INTERVAL: int = 3600
     REQUEST_TIMEOUT: int = 60
+    POLL_THREADS: int = 5
     
     _defaultValues: dict | None = None
     @classmethod

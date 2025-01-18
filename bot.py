@@ -8,6 +8,7 @@ from traceback import format_exc
 from typing import Type
 import dataclasses
 import typing
+from multiprocessing.pool import ThreadPool
 from telegram import Bot, ParseMode, Update
 from telegram.constants import MAX_MESSAGE_LENGTH
 from telegram.ext import (Updater, CommandHandler, MessageHandler, ConversationHandler, Filters, CallbackContext)
@@ -276,6 +277,7 @@ PERIODIC_TASK_ERRORS: dict[str, dict[str, list[str]]] = {
     
 }
 PERIODIC_TASK_TICK = 0
+periodicThreadPool = ThreadPool(Conf.POLL_THREADS)
 def periodic_task() -> None:
     # {
     #     'email_addr': email_addr,
@@ -375,8 +377,7 @@ def periodic_task() -> None:
     #     handler(emailConfDict)
     
     # TODO: Implement timeout control
-    from multiprocessing.pool import ThreadPool
-    for _ in ThreadPool(5).imap_unordered(handler, emailDB.getAll()):
+    for _ in periodicThreadPool.imap_unordered(handler, emailDB.getAll()):
         pass
 
 LAST_ERROR_REPORT_TIME: float | None = None
