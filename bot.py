@@ -55,7 +55,7 @@ def handle_large_text(text):
         else:
             out = text[:MAX_MESSAGE_LENGTH]
             yield out
-            text = text.lstrip(out)
+            text = text[MAX_MESSAGE_LENGTH:]
 
 def error(update: Update, context: CallbackContext) -> None:
     """Log Errors caused by Updates."""
