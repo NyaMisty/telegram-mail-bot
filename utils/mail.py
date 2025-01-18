@@ -8,11 +8,11 @@ logger = logging.getLogger(__name__)
 class Email(object):
     def __init__(self, raw_mail_lines):
         if isinstance(raw_mail_lines, str):
-            msg_content = raw_mail_lines
+            self.msg_content = raw_mail_lines
         else:
-            msg_content = b'\r\n'.join(raw_mail_lines)
+            self.msg_content = b'\r\n'.join(raw_mail_lines)
         try:
-            msg =  PyzMessage.factory(msg_content)
+            msg =  PyzMessage.factory(self.msg_content)
 
             self.subject = msg.get_subject()
             self.sender = msg.get_address('from')
@@ -39,7 +39,7 @@ class Email(object):
                 else:
                     self.additional_parts.append(mailpart)
         except Exception as e:
-            raise Exception("Cannot parse email body: %s" % raw_mail_lines) from e
+            raise Exception("Cannot parse email body: %s" % self.msg_content) from e
 
     def __repr__(self):
         text, _ = self.format_email()

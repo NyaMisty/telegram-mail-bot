@@ -336,6 +336,16 @@ def periodic_task() -> None:
                         logger.warning('cannot retrieve mail %d for %s', idx, emailConf, exc_info=True)
                         break
                     
+                    logger.info('Got new email: %s', mail.msg_content)
+                    if Conf.SAVE_EMAIL_LOGS:
+                        emlFileName= f'logs/{email_addr}/{idx}.eml'
+                        os.makedirs(os.path.dirname(emlFileName), exist_ok=True)
+                        with open(emlFileName, 'wb') as f:
+                            if isinstance(mail.msg_content, str):
+                                f.write(mail.msg_content.encode())
+                            else:
+                                f.write(mail.msg_content)
+                    
                     text = f'''New Email [{emailConf.email_addr}-{idx}]\n'''
                     emailbody, emailfiles = mail.format_email()
                     text += emailbody

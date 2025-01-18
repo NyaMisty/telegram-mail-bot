@@ -15,6 +15,8 @@ class Conf:
     REQUEST_TIMEOUT: int = 60
     POLL_THREADS: int = 5
     
+    SAVE_EMAIL_LOGS: bool = False
+    
     _defaultValues: dict | None = None
     @classmethod
     def _reloadConf(cls):
