@@ -21,16 +21,31 @@ updater: Updater = None # type: ignore[assignment]
 
 socket.setdefaulttimeout(10) # avoid imaplib timeout
 
-emailDB = pysondb.getDb("conf/email_accounts.json")
-
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s:%(lineno)d - %(message)s',
                     # stream=sys.stdout,
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+emailDB = pysondb.getDb("conf/email_accounts.json")
+def doEmailDBMigration():
+    for confDict in emailDB.getAll():
+        curID = confDict.pop('id')
+
+        # migrate001: int chat_id into string
+        if 'chat_id' in confDict:
+            if isinstance(confDict['chat_id'], int):
+                confDict['chat_id'] = str(confDict['chat_id'])
+        emailDB.updateById(curID, confDict)
+
+doEmailDBMigration()
 
 def is_owner(update: Update) -> bool:
-    return update.message.chat_id == Conf.OWNER_CHAT_ID
+    if update.message:
+        if update.message.chat_id == Conf.OWNER_CHAT_ID:
+            return True
+        if update.message.from_user is not None and update.message.from_user.id == Conf.OWNER_CHAT_ID:
+            return True
+    return False
 
 def handle_large_text(text):
     while text:
@@ -45,13 +60,6 @@ def handle_large_text(text):
 def error(update: Update, context: CallbackContext) -> None:
     """Log Errors caused by Updates."""
     logger.warning('Update "%s" caused error "%s"', update, context.error)
-
-def start_callback(update: Update, context: CallbackContext) -> None:
-    if not is_owner(update):
-        return
-    msg = "Use /help to get help"
-    # print(update)
-    update.message.reply_text(msg)
 
 def _help(update: Update, context: CallbackContext) -> None:
     if not is_owner(update):
@@ -73,9 +81,7 @@ def _help(update: Update, context: CallbackContext) -> None:
 
 Telegram中回复即可直接回复邮件
 """
-    context.bot.send_message(update.message.chat_id, 
-                    # parse_mode=ParseMode.MARKDOWN,
-                    text=help_str)
+    update.message.reply_text(text=help_str)
 
 @dataclasses.dataclass
 class EmailConf():
@@ -83,7 +89,7 @@ class EmailConf():
     email_passwd: str
     server_uri: str
     smtp_server_uri: str | None
-    chat_id: int
+    chat_id: str
     inbox_num: int
 
 def setting_list_email(update: Update, context: CallbackContext) -> None:
@@ -97,7 +103,7 @@ def setting_list_email(update: Update, context: CallbackContext) -> None:
         except Exception:
             msg += "    (Invalid Email Account: %s)\n" % emailConfDict
             continue
-        msg += f"    Email: {emailConf.email_addr}, Password: {emailConf.email_passwd}, Server: {emailConf.server_uri}, SMTP Server: {emailConf.smtp_server_uri}, InboxNum: {emailConf.inbox_num}\n"
+        msg += f"    Email: {emailConf.email_addr}, Password: {len(emailConf.email_passwd) * '*'}, Server: {emailConf.server_uri}, SMTP Server: {emailConf.smtp_server_uri}, InboxNum: {emailConf.inbox_num}\n"
     update.message.reply_text(msg)
 
 def setting_add_email(update: Update, context: CallbackContext) -> None:
@@ -120,12 +126,16 @@ def setting_add_email(update: Update, context: CallbackContext) -> None:
         update.message.reply_text(f"invalid smtp server: {email_smtp}")
         return
     
+    message_thread_id = ""
+    if update.message.is_topic_message and update.message.message_thread_id:
+        message_thread_id = update.message.message_thread_id
+    
     emailConf = EmailConf(
         email_addr=email_addr,
         email_passwd=email_passwd,
         server_uri=email_server,
         smtp_server_uri=email_smtp,
-        chat_id=update.message.chat_id,
+        chat_id=f"{update.message.chat_id},{message_thread_id}",
         inbox_num=-1,
     )
     
@@ -179,21 +189,20 @@ def safeSend(sender, content):
             logger.warning('cannot send tg msg (retry %d)', i, exc_info=True)
         time.sleep(i * 5)
 
-def getEmailConf(email_addr):
-    emailConfs = emailDB.getByQuery({'email_addr': email_addr})
-    if not emailConfs:
-        raise Exception(f'cannot find config for email {email_addr}')
-    assert len(emailConfs) == 1
-    emailConfDict = emailConfs[0]
+def getEmailConfFromDict(emailConfDict):
     if 'id' in emailConfDict:
         emailConfDict.pop('id')
     emailConf = EmailConf(**emailConfDict)
     return emailConf
 
-def getEmailConfFromDict(emailConfDict):
-    if 'id' in emailConfDict:
-        emailConfDict.pop('id')
-    emailConf = EmailConf(**emailConfDict)
+def getEmailConf(email_addr):
+    emailConfs = emailDB.getByQuery({'email_addr': email_addr})
+    if not emailConfs:
+        raise Exception(f'cannot find config for email {email_addr}')
+    assert len(emailConfs) == 1
+    
+    emailConfDict = emailConfs[0]
+    emailConf = getEmailConfFromDict(emailConfDict)
     return emailConf
 
 emailClientCache: dict[tuple, EmailClientBase] = {}
@@ -240,9 +249,7 @@ def periodic_task() -> None:
     def handler(emailConfDict, managers=None):
         logger.info("processing periodic task for %s", emailConfDict)
         try:
-            if 'id' in emailConfDict:
-                emailConfDict.pop('id')
-            emailConf = EmailConf(**emailConfDict)
+            emailConf = getEmailConfFromDict(emailConfDict)
             email_addr = emailConf.email_addr
         except Exception:
             logger.warning('Cannot parse emailConfDict: %s', emailConfDict, exc_info=True)
@@ -273,8 +280,11 @@ def periodic_task() -> None:
             return fut.get(Conf.REQUEST_TIMEOUT)
         try:
             client = getEmailClient(emailConf)
+            chat_id, reply_to_message_id = emailConf.chat_id.split(',') if ',' in emailConf.chat_id else (emailConf.chat_id, None)
             new_inbox_num = run_with_timeout(lambda: client.get_mails_count())
-            if new_inbox_num > emailConf.inbox_num:
+            if new_inbox_num < emailConf.inbox_num:
+                emailDB.updateByQuery({'email_addr': email_addr}, {'inbox_num': new_inbox_num})
+            elif new_inbox_num > emailConf.inbox_num:
                 for idx in range(emailConf.inbox_num + 1, new_inbox_num + 1):
                     try:
                         mail = run_with_timeout(lambda: client.get_mail_by_index(idx))
@@ -287,18 +297,18 @@ def periodic_task() -> None:
                     text += emailbody
                     
                     run_with_timeout(lambda: safeSendText(
-                        lambda text: updater.bot.send_message(chat_id=emailConf.chat_id, text=text), # type: ignore[has-type]
+                        lambda text: updater.bot.send_message(chat_id=chat_id,reply_to_message_id=reply_to_message_id, text=text), # type: ignore[has-type]
                         text,
                     ))
                     for filename, filemime, file_content in emailfiles:
                         if filemime.startswith('image'):
                             run_with_timeout(lambda: safeSend(
-                                lambda text: updater.bot.send_document(chat_id=emailConf.chat_id, document=text, filename=filename), # type: ignore[has-type]
+                                lambda text: updater.bot.send_photo(chat_id=chat_id, reply_to_message_id=reply_to_message_id, photo=file_content, filename=filename), # type: ignore[has-type]
                                 text
                             ))
                         else:
                             run_with_timeout(lambda: safeSend(
-                                lambda text: updater.bot.send_photo(chat_id=emailConf.chat_id, photo=file_content, filename=filename), # type: ignore[has-type]
+                                lambda text: updater.bot.send_document(chat_id=chat_id, reply_to_message_id=reply_to_message_id, document=file_content, filename=filename), # type: ignore[has-type]
                                 text
                             ))
                     emailDB.updateByQuery({'email_addr': email_addr}, {'inbox_num': idx})
@@ -333,8 +343,12 @@ def periodic_task_error_report():
     logger.info("last errors (%s - %s): %s", LAST_ERROR_REPORT_TIME, time.time(), last_errors)
     
     queries = PERIODIC_TASK_TICK - LAST_ERROR_REPORT_TICK
-    time_since_last_report = str(datetime.datetime.now() - LAST_ERROR_REPORT_TIME) if not LAST_ERROR_REPORT_TIME else str(datetime.timedelta(seconds=Conf.ERR_REPORT_INTERVAL))
-    
+
+    if LAST_ERROR_REPORT_TIME is not None:
+        time_since_last_report = str(datetime.datetime.now() - datetime.datetime.fromtimestamp(Conf.LAST_ERROR_REPORT_TIME))
+    else:
+        time_since_last_report = str(datetime.timedelta(seconds=Conf.ERR_REPORT_INTERVAL))    
+
     LAST_ERROR_REPORT_TICK = PERIODIC_TASK_TICK
     LAST_ERROR_REPORT_TIME = time.time()
     PERIODIC_TASK_ERRORS = {}
@@ -345,7 +359,7 @@ def periodic_task_error_report():
     
     text = ''
     for acc, accErrDict in last_errors.items():
-        if sum(c for c in accErrDict.values()) < queries * 0.5:
+        if sum(len(errList) for errList in accErrDict.values()) < queries * 0.5:
             # to avoid spamming, we only print error summary if this account has MASSIVE amount of errors
             text += f'Acc: {acc}\n'
             for errType, errList in accErrDict.items():
@@ -358,7 +372,22 @@ def periodic_task_error_report():
         text
     )
 
+def is_reply_to_bot(update: Update, context: CallbackContext) -> bool:
+    assert update.message
+    if update.message.reply_to_message:
+        if update.message.reply_to_message.from_user:
+            if update.message.reply_to_message.from_user.id == context.bot.id:
+                return True
+    return False
+
+
 def handle_reply_send_email(update: Update, context: CallbackContext):
+    if not update.message.reply_to_message:
+        return
+    
+    if not is_reply_to_bot(update, context):
+        return
+
     original_message = update.message.reply_to_message.text
     email, mail_id, from_email = re.findall(r'^.*?\[(.*?)-(\d+)\]\n[\S\s]+?From: .*?(\S+)\n', original_message)[0]
     reply_message = update.message.text
@@ -367,7 +396,10 @@ def handle_reply_send_email(update: Update, context: CallbackContext):
         update.message.reply_text("Don't know the subject of email. Send the email in this form: \n\n(Your subject here)\n\n(Your body)")
         return
     emailConf = getEmailConf(email)
-    emailConf.smtp_server_uri
+    if not emailConf.smtp_server_uri:
+        update.message.reply_text(f"Cannot send email from {email}, no smtp server configured.")
+        return
+
     send_email(
         smtp_server_uri=emailConf.smtp_server_uri, 
         sender_email=emailConf.email_addr, 
@@ -384,11 +416,10 @@ def main():
 
     # Get the dispatcher to register handlers
     dp = updater.dispatcher
+    assert dp
 
     # simple start function
-    dp.add_handler(CommandHandler("start", start_callback))
-
-    dp.add_handler(CommandHandler("help", _help))
+    dp.add_handler(CommandHandler(["start", "help"], _help))
     #
     #  Add command handler to set email address and account.
     dp.add_handler(CommandHandler("list_email", setting_list_email))
@@ -408,6 +439,9 @@ def main():
 
     
     def errorHandler(update: Update, context: CallbackContext):
+        if not update or not update.message:
+            return
+
         import traceback
         if context.error:
             excStr = '\n'.join(traceback.format_exception(context.error))
