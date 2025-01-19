@@ -1,4 +1,4 @@
-FROM docker.io/oz123/pipenv:3.10-v2023-6-26 AS builder
+FROM docker.io/oz123/pipenv:3.11-v2023-6-26 AS builder
 
 # Tell pipenv to create venv in the current directory
 ENV PIPENV_VENV_IN_PROJECT=1
@@ -11,7 +11,7 @@ RUN /usr/local/bin/pipenv sync
 
 ######### Build Stage Finished ##########
 
-FROM docker.io/python:3.11 AS runtime
+FROM python:3.11-alpine AS runtime
 
 RUN mkdir -pv /workdir/.venv
 
