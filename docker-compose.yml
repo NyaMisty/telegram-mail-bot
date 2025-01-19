@@ -10,6 +10,7 @@ services:
     volumes:
       - ./.env:/workdir/.env
       - ./conf:/workdir/conf
+      - ./logs:/workdir/logs
       - .:/workdir/src
     tty: true
     stdin_open: true

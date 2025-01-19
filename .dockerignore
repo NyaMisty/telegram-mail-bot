@@ -1,3 +1,5 @@
 Dockerfile*
 conf
 .env*
+logs
+__pycache__
