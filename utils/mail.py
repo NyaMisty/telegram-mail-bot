@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 from pyzmail import PyzMessage, decode_text # type: ignore
 from pyzmail.parse import MailPart # type: ignore
 
@@ -6,8 +6,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 class Email(object):
-    def __init__(self, raw_mail_lines):
-        if isinstance(raw_mail_lines, str):
+    def __init__(self, raw_mail_lines: Union[bytes, List[bytes]]):
+        assert isinstance(raw_mail_lines, (bytes, list)), "raw_mail_lines must be bytes or list of bytes"
+        if isinstance(raw_mail_lines, bytes):
             self.msg_content = raw_mail_lines
         else:
             self.msg_content = b'\r\n'.join(raw_mail_lines)

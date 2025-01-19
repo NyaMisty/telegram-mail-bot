@@ -53,7 +53,8 @@ class EmailClientIMAP(EmailClientBase):
     def get_mail_by_index(self, index):
         status, data = self.server.fetch('%d' % index, '(RFC822)')
         assert status == 'OK', f'imap failed to fetch: {status}'
-        mail_lines = data[0][1].decode()
+        mail_lines = data[0][1]
+        assert isinstance(mail_lines, bytes), f'imap fetch returned non-bytes: {type(mail_lines)}'
         return Email(mail_lines)
 
     def refresh_connection(self):
