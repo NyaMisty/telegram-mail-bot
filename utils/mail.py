@@ -34,7 +34,8 @@ class Email(object):
                     except Exception:
                         logger.warning("cannot use markdownify to convert html, fallback to raw HTML instead.")
                         self.html = payload
-                elif not is_body or is_body.startswith('text/'):
+                elif is_body.startswith('text/') or (
+                    not is_body and not mailpart.type): # strange email with none mime
                     payload, used_charset=decode_text(mailpart.get_payload(), mailpart.charset, None)
                     self.text = payload
                 else:
