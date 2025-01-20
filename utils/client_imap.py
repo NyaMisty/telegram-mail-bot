@@ -25,7 +25,8 @@ class EmailClientIMAP(EmailClientBase):
             # TODO: implement imap starttls
             raise RuntimeError(f'Unsupported IMAP protocol variant: {self.server_uri.scheme}')
 
-        # server.debug = 100
+        if os.getenv('IMAPDEBUG'):
+            server.debug = 100
         
         # display the welcome info received from server,
         # indicating the connection is set up properly

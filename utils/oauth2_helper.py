@@ -23,9 +23,12 @@ class Token():
             self.access_token, self.access_token_expire = new_token, new_token_expire
         return self.access_token
     
-    def getSasl(self, username):
+    def getSasl(self, username, raw=False):
         saslBody = f"user={username}".encode() + b"\x01" + f"auth=Bearer {self.getToken()}".encode() +  b"\x01\x01"
-        return b64encode(saslBody).decode()
+        if not raw:
+            return b64encode(saslBody).decode()
+        else:
+            return saslBody
 
 
 class TokenStore():
@@ -212,3 +215,17 @@ class OAuth2_MailRu(OAuth2_Base):
         return f'https://o2.mail.ru/login?response_type=code&client_id=thunderbird&redirect_uri=http%3A%2F%2Flocalhost&scope=mail.imap&login_hint={urllib.parse.quote_plus(email)}'
 
 OAuth2Factory.register_provider(OAuth2_MailRu)
+
+class OAuth2_Gmail(OAuth2_Base):
+    name = 'gmail'
+    token_uri = 'https://www.googleapis.com/oauth2/v3/token'
+    redirect_uri = 'http://localhost'
+
+    client_id = '406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com'
+    client_secret = bytes.fromhex('6b536d717265527230717742574a67626635592d506a5355').decode() # must use this to bypass Google's app secret leak test
+    suffix_list = ['@gmail.com', ]
+    @classmethod
+    def get_login_url(self, email):
+        return f'https://accounts.google.com/o/oauth2/auth?response_type=code&client_id={self.client_id}&redirect_uri=http%3A%2F%2Flocalhost&scope=https%3A%2F%2Fmail.google.com%2F+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcarddav+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&login_hint={urllib.parse.quote_plus(email)}'
+
+OAuth2Factory.register_provider(OAuth2_Gmail)

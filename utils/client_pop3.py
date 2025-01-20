@@ -55,7 +55,8 @@ class EmailClientPOP3(EmailClientBase):
             # TODO: implement pop3 starttls
             raise RuntimeError(f'Unsupported POP3 protocol variant: {self.server_uri.scheme}')
 
-        # server.set_debuglevel(100)
+        if os.getenv('POP3DEBUG'):
+            server.set_debuglevel(100)
         
         # display the welcome info received from server,
         # indicating the connection is set up properly

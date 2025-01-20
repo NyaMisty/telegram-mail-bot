@@ -1,4 +1,5 @@
 import logging
+import os
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -31,7 +32,8 @@ def send_email(smtp_server_uri, sender_email, password, receiver_email, subject,
     else:
         raise NotImplementedError(f"Unsupported protocol: {smtp_server_uri.scheme}")
 
-    # server.set_debuglevel(100)
+    if os.getenv('SMTPDEBUG'):
+        server.set_debuglevel(100)
 
     try:
         token = OAuth2Factory.token_from_string(password)
@@ -39,7 +41,7 @@ def send_email(smtp_server_uri, sender_email, password, receiver_email, subject,
             server.login(sender_email, password)  # 登录SMTP服务器
         else:
             server.ehlo_or_helo_if_needed()
-            server.auth('XOAUTH2', lambda: token.getSasl(sender_email))
+            server.auth('XOAUTH2', lambda: token.getSasl(sender_email, raw=True).decode('ascii')) # inside server.auth it will do encode('ascii')
         text = msg.as_string()  # 转换为字符串
         ret = server.sendmail(sender_email, receiver_email, text)  # 发送邮件
         logger.info("successfully sent email with return info: %s", ret)
