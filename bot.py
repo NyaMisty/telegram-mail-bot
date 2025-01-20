@@ -14,6 +14,7 @@ from telegram.constants import MAX_MESSAGE_LENGTH
 from telegram.ext import (Updater, CommandHandler, MessageHandler, ConversationHandler, Filters, CallbackContext)
 from pysondb import db as pysondb
 from utils import EmailClientBase, EmailClientIMAP, EmailClientPOP3
+from utils.imap_autodetect import get_mail_server
 from utils.oauth2_helper import OAuth2_MS, OAuth2Factory
 from utils.smtpclient import send_email
 from utils.conf import Conf
@@ -157,10 +158,19 @@ def setting_add_email(update: Update, context: CallbackContext) -> None:
         return
     email_addr = context.args[0]
     email_passwd = context.args[1]
-    email_server = context.args[2]
+    email_server = None
+    if len(context.args) > 2:
+        email_server = context.args[2]
     email_smtp = None
     if len(context.args) > 3:
         email_smtp = context.args[3]
+    
+    if email_server is None:
+        ret = get_mail_server(email_addr)
+        if not ret:
+            update.message.reply_text(f"cannot auto detect mail server for {email_server}, please manually specify server address")
+            return
+        email_server, email_smtp = ret
     
     if not email_server.startswith('imap') and not email_server.startswith('pop3'):
         update.message.reply_text(f"invalid server: {email_server}")
