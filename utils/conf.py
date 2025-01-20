@@ -16,6 +16,7 @@ class Conf:
     POLL_THREADS: int = 5
     
     SAVE_EMAIL_LOGS: bool = False
+    ENABLED_PLUGINS: str = ''
     
     _defaultValues: dict | None = None
     @classmethod

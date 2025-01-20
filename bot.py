@@ -1,4 +1,5 @@
 import datetime
+import importlib
 import logging
 import os
 import re
@@ -13,11 +14,13 @@ from telegram import Bot, ParseMode, Update
 from telegram.constants import MAX_MESSAGE_LENGTH
 from telegram.ext import (Updater, CommandHandler, MessageHandler, ConversationHandler, Filters, CallbackContext)
 from pysondb import db as pysondb
+from plugins.base_plugin import PluginBase
 from utils import EmailClientBase, EmailClientIMAP, EmailClientPOP3
 from utils.imap_autodetect import get_mail_server
 from utils.oauth2_helper import OAuth2_MS, OAuth2Factory
 from utils.smtpclient import send_email
 from utils.conf import Conf
+from utils.emailconf import emailDB, EmailConf, getEmailConf
 
 updater: Updater = None # type: ignore[assignment]
 
@@ -27,19 +30,6 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s:%(lineno)d - 
                     # stream=sys.stdout,
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-emailDB = pysondb.getDb("conf/email_accounts.json")
-def doEmailDBMigration():
-    for confDict in emailDB.getAll():
-        curID = confDict.pop('id')
-
-        # migrate001: int chat_id into string
-        if 'chat_id' in confDict:
-            if isinstance(confDict['chat_id'], int):
-                confDict['chat_id'] = str(confDict['chat_id'])
-        emailDB.updateById(curID, confDict)
-
-doEmailDBMigration()
 
 def is_owner(update: Update) -> bool:
     if update.message:
@@ -91,15 +81,6 @@ Telegram中回复即可直接回复邮件
 """
     update.message.reply_text(text=help_str)
 
-@dataclasses.dataclass
-class EmailConf():
-    email_addr: str
-    email_passwd: str
-    server_uri: str
-    smtp_server_uri: str | None
-    chat_id: str
-    inbox_num: int
-
 def setting_list_email(update: Update, context: CallbackContext) -> None:
     if not is_owner(update):
         return
@@ -111,7 +92,7 @@ def setting_list_email(update: Update, context: CallbackContext) -> None:
     msg = 'Email Account List:\n'
     for emailConfDict in emailDB.getAll():
         try:
-            emailConf = getEmailConfFromDict(emailConfDict)
+            emailConf = EmailConf.from_dict(emailConfDict)
         except Exception:
             msg += "    (Invalid Email Account: %s)\n" % emailConfDict
             continue
@@ -242,22 +223,6 @@ def safeSend(sender, content):
             logger.warning('cannot send tg msg (retry %d)', i, exc_info=True)
         time.sleep(i * 5)
 
-def getEmailConfFromDict(emailConfDict):
-    if 'id' in emailConfDict:
-        emailConfDict.pop('id')
-    emailConf = EmailConf(**emailConfDict)
-    return emailConf
-
-def getEmailConf(email_addr):
-    emailConfs = emailDB.getByQuery({'email_addr': email_addr})
-    if not emailConfs:
-        raise Exception(f'cannot find config for email {email_addr}')
-    assert len(emailConfs) == 1
-    
-    emailConfDict = emailConfs[0]
-    emailConf = getEmailConfFromDict(emailConfDict)
-    return emailConf
-
 emailClientCache: dict[tuple, EmailClientBase] = {}
 def getEmailClient(emailConf: EmailConf) -> EmailClientBase:
     cacheKey = tuple(dataclasses.astuple(emailConf))
@@ -283,6 +248,17 @@ def getEmailClient(emailConf: EmailConf) -> EmailClientBase:
     emailClientCache[cacheKey] = emailClient
     return emailClient
 
+def getAllPlugins():
+    for plugin_name in Conf.ENABLED_PLUGINS.split(','):
+        if not plugin_name:
+            continue
+        try:
+            plugin = importlib.import_module(f'plugins.{plugin_name}')
+        except:
+            logger.info('cannot import plugin %s:', plugin_name, exc_info=True)
+            continue
+        yield plugin_name, plugin.PLUGIN
+
 PERIODIC_TASK_ERRORS: dict[str, dict[str, list[str]]] = {
     
 }
@@ -303,7 +279,7 @@ def periodic_task() -> None:
     def handler(emailConfDict, managers=None):
         logger.info("processing periodic task for %s", emailConfDict)
         try:
-            emailConf = getEmailConfFromDict(emailConfDict)
+            emailConf = EmailConf.from_dict(emailConfDict)
             email_addr = emailConf.email_addr
         except Exception:
             logger.warning('Cannot parse emailConfDict: %s', emailConfDict, exc_info=True)
@@ -360,21 +336,32 @@ def periodic_task() -> None:
                     emailbody, emailfiles = mail.format_email()
                     text += emailbody
                     
-                    run_with_timeout(lambda: safeSendText(
-                        lambda text: updater.bot.send_message(chat_id=chat_id,reply_to_message_id=reply_to_message_id, text=text), # type: ignore[has-type]
-                        text,
-                    ))
-                    for filename, filemime, file_content in emailfiles:
-                        if filemime.startswith('image'):
-                            run_with_timeout(lambda: safeSend(
-                                lambda text: updater.bot.send_photo(chat_id=chat_id, reply_to_message_id=reply_to_message_id, photo=file_content, filename=filename), # type: ignore[has-type]
-                                text
-                            ))
-                        else:
-                            run_with_timeout(lambda: safeSend(
-                                lambda text: updater.bot.send_document(chat_id=chat_id, reply_to_message_id=reply_to_message_id, document=file_content, filename=filename), # type: ignore[has-type]
-                                text
-                            ))
+                    interceptMail = False
+                    for plugin_name, plugin in getAllPlugins():
+                        plugin: PluginBase
+                        ret = plugin.onNewEmail(email_addr, mail)
+                        if ret:
+                            logger.info('Email message intercepted by plugin %s', plugin_name)
+                            interceptMail = True
+
+                    if not interceptMail:
+                        run_with_timeout(lambda: safeSendText(
+                            lambda text: updater.bot.send_message(chat_id=chat_id,reply_to_message_id=reply_to_message_id, text=text), # type: ignore[has-type]
+                            text,
+                        ))
+                        for filename, filemime, file_content in emailfiles:
+                            if filemime.startswith('image'):
+                                run_with_timeout(lambda: safeSend(
+                                    lambda text: updater.bot.send_photo(chat_id=chat_id, reply_to_message_id=reply_to_message_id, photo=file_content, filename=filename), # type: ignore[has-type]
+                                    text
+                                ))
+                            else:
+                                run_with_timeout(lambda: safeSend(
+                                    lambda text: updater.bot.send_document(chat_id=chat_id, reply_to_message_id=reply_to_message_id, document=file_content, filename=filename), # type: ignore[has-type]
+                                    text
+                                ))
+                    else:
+                        logger.info('Not sending intercepted email message: %s', text)
                     emailDB.updateByQuery({'email_addr': email_addr}, {'inbox_num': idx})
         except Exception as e:
             if re.findall(r'\bEOF\b', str(e)):
@@ -527,6 +514,11 @@ def main():
         
     dp.add_error_handler(errorHandler)
     
+    for plugin_name, plugin in getAllPlugins():
+        plugin: PluginBase
+        logger.info('Initializing plugin %s', plugin_name)
+        plugin.onSetup(updater)
+
     from apscheduler.schedulers.background import BackgroundScheduler
     scheduler = BackgroundScheduler()
     scheduler.add_job(periodic_task, 'interval', seconds=Conf.POLL_INTERVAL, id='email-periodic_task', replace_existing=True)
