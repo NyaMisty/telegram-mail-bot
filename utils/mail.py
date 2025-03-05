@@ -58,12 +58,12 @@ class Email(object):
             mainbody = self.html or self.text or ''
         retfiles: List[Tuple[Optional[str], Optional[str], Optional[bytes]]] = []
         if self.additional_parts:
-            mainbody += f'\n\nAdditional Parts:\n'
+            mainbody += f'\n\nAdditional Parts:'
             for part in self.additional_parts:
                 part: MailPart
                 part_name = part.filename
                 part_content = part.get_payload()
-                mainbody += f'- {part_name} ({part.type}, size {len(part_content)})'
+                mainbody += f'\n- {part_name} ({part.type}, size {len(part_content)})'
                 retfiles.append((part_name, part.type, part_content))
         mail_str += mainbody
         return mail_str, retfiles
