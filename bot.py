@@ -309,60 +309,62 @@ def periodic_task() -> None:
             fut = pool.apply_async(fun, args=args, kwds=kwargs)
             return fut.get(Conf.REQUEST_TIMEOUT)
         try:
-            client = getEmailClient(emailConf)
-            chat_id, reply_to_message_id = emailConf.chat_id.split(',') if ',' in emailConf.chat_id else (emailConf.chat_id, None)
-            new_inbox_num = run_with_timeout(lambda: client.get_mails_count())
-            if new_inbox_num < emailConf.inbox_num:
-                emailDB.updateByQuery({'email_addr': email_addr}, {'inbox_num': new_inbox_num})
-            elif new_inbox_num > emailConf.inbox_num:
-                for idx in range(emailConf.inbox_num + 1, new_inbox_num + 1):
-                    try:
-                        mail = run_with_timeout(lambda: client.get_mail_by_index(idx))
-                    except Exception:
-                        logger.warning('cannot retrieve mail %d for %s', idx, emailConf, exc_info=True)
-                        break
-                    
-                    logger.info('Got new email: %s', mail.msg_content)
-                    if Conf.SAVE_EMAIL_LOGS:
-                        emlFileName= f'logs/{email_addr}/{idx}.eml'
-                        os.makedirs(os.path.dirname(emlFileName), exist_ok=True)
-                        with open(emlFileName, 'wb') as f:
-                            if isinstance(mail.msg_content, str):
-                                f.write(mail.msg_content.encode())
-                            else:
-                                f.write(mail.msg_content)
-                    
-                    text = f'''New Email [{emailConf.email_addr}-{idx}]\n'''
-                    emailbody, emailfiles = mail.format_email()
-                    text += emailbody
-                    
-                    interceptMail = False
-                    for plugin_name, plugin in getAllPlugins():
-                        plugin: PluginBase
-                        ret = plugin.onNewEmail(email_addr, mail)
-                        if ret:
-                            logger.info('Email message intercepted by plugin %s', plugin_name)
-                            interceptMail = True
+            def do():
+                client = getEmailClient(emailConf)
+                chat_id, reply_to_message_id = emailConf.chat_id.split(',') if ',' in emailConf.chat_id else (emailConf.chat_id, None)
+                new_inbox_num = client.get_mails_count()
+                if new_inbox_num < emailConf.inbox_num:
+                    emailDB.updateByQuery({'email_addr': email_addr}, {'inbox_num': new_inbox_num})
+                elif new_inbox_num > emailConf.inbox_num:
+                    for idx in range(emailConf.inbox_num + 1, new_inbox_num + 1):
+                        try:
+                            mail = client.get_mail_by_index(idx)
+                        except Exception:
+                            logger.warning('cannot retrieve mail %d for %s', idx, emailConf, exc_info=True)
+                            break
+                        
+                        logger.info('Got new email: %s', mail.msg_content)
+                        if Conf.SAVE_EMAIL_LOGS:
+                            emlFileName= f'logs/{email_addr}/{idx}.eml'
+                            os.makedirs(os.path.dirname(emlFileName), exist_ok=True)
+                            with open(emlFileName, 'wb') as f:
+                                if isinstance(mail.msg_content, str):
+                                    f.write(mail.msg_content.encode())
+                                else:
+                                    f.write(mail.msg_content)
+                        
+                        text = f'''New Email [{emailConf.email_addr}-{idx}]\n'''
+                        emailbody, emailfiles = mail.format_email()
+                        text += emailbody
+                        
+                        interceptMail = False
+                        for plugin_name, plugin in getAllPlugins():
+                            plugin: PluginBase
+                            ret = plugin.onNewEmail(email_addr, mail)
+                            if ret:
+                                logger.info('Email message intercepted by plugin %s', plugin_name)
+                                interceptMail = True
 
-                    if not interceptMail:
-                        run_with_timeout(lambda: safeSendText(
-                            lambda text: updater.bot.send_message(chat_id=chat_id,reply_to_message_id=reply_to_message_id, text=text), # type: ignore[has-type]
-                            text,
-                        ))
-                        for filename, filemime, file_content in emailfiles:
-                            if filemime.startswith('image'):
-                                run_with_timeout(lambda: safeSend(
-                                    lambda text: updater.bot.send_photo(chat_id=chat_id, reply_to_message_id=reply_to_message_id, photo=file_content, filename=filename), # type: ignore[has-type]
-                                    text
-                                ))
-                            else:
-                                run_with_timeout(lambda: safeSend(
-                                    lambda text: updater.bot.send_document(chat_id=chat_id, reply_to_message_id=reply_to_message_id, document=file_content, filename=filename), # type: ignore[has-type]
-                                    text
-                                ))
-                    else:
-                        logger.info('Not sending intercepted email message: %s', text)
-                    emailDB.updateByQuery({'email_addr': email_addr}, {'inbox_num': idx})
+                        if not interceptMail:
+                            safeSendText(
+                                lambda text: updater.bot.send_message(chat_id=chat_id,reply_to_message_id=reply_to_message_id, text=text), # type: ignore[has-type]
+                                text,
+                            )
+                            for filename, filemime, file_content in emailfiles:
+                                if filemime.startswith('image'):
+                                    safeSend(
+                                        lambda text: updater.bot.send_photo(chat_id=chat_id, reply_to_message_id=reply_to_message_id, photo=file_content, filename=filename), # type: ignore[has-type]
+                                        text
+                                    )
+                                else:
+                                    safeSend(
+                                        lambda text: updater.bot.send_document(chat_id=chat_id, reply_to_message_id=reply_to_message_id, document=file_content, filename=filename), # type: ignore[has-type]
+                                        text
+                                    )
+                        else:
+                            logger.info('Not sending intercepted email message: %s', text)
+                        emailDB.updateByQuery({'email_addr': email_addr}, {'inbox_num': idx})
+            run_with_timeout(do)
         except Exception as e:
             if re.findall(r'\bEOF\b', str(e)):
                 pass # do not process occasional random network issue
