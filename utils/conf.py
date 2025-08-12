@@ -17,7 +17,8 @@ class Conf:
     
     SAVE_EMAIL_LOGS: bool = False
     ENABLED_PLUGINS: str = ''
-    
+    LONG_BODY_TO_HTML_THRESHOLD: int = 0
+
     _defaultValues: dict | None = None
     @classmethod
     def _reloadConf(cls):
