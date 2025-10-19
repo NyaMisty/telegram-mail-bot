@@ -3,6 +3,8 @@ from pyzmail import PyzMessage, decode_text # type: ignore
 from pyzmail.parse import MailPart # type: ignore
 import re
 import bleach
+from markdownify import markdownify as md
+
 import html
 
 import logging
@@ -53,6 +55,7 @@ class Email(object):
                     lines = cleaned_html.splitlines()
                     non_empty_lines = [line for line in lines if line.strip()]
                     self.html = "\n".join(non_empty_lines)
+                    self.text = md(self.html)
 
                 elif is_body.startswith('text/') or (
                     not is_body and not mailpart.type): # strange email with none mime
