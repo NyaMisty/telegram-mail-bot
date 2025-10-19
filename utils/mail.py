@@ -1,6 +1,8 @@
 from typing import List, Optional, Tuple, Union
 from pyzmail import PyzMessage, decode_text # type: ignore
 from pyzmail.parse import MailPart # type: ignore
+import re
+import bleach
 import html
 
 import logging
@@ -30,17 +32,32 @@ class Email(object):
                 if is_body.startswith('text/html'):
                     payload, used_charset = decode_text(mailpart.get_payload(), mailpart.charset, None)
                     self.html_raw = payload
-                    try:
-                        from markdownify import markdownify as md # type: ignore
-                        self.text = md(payload)
-                        self.html = payload
-                    except Exception:
-                        logger.warning("cannot use markdownify to convert html, fallback to raw HTML instead.")
-                        self.html = payload
+                    allowed_tags = [
+                        'b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del',
+                        'tg-spoiler', 'a', 'tg-emoji', 'code', 'pre', 'br'
+                    ]
+                    allowed_attributes = {
+                        'a': ['href'],
+                        'code': ['class']
+                    }
+                    allowed_protocols = ['http', 'https', 'tg']
+                    payload = re.sub(r'<style[^>]*>.*?</style>', '', payload, flags=re.DOTALL | re.IGNORECASE)
+                    cleaned_html = bleach.clean(
+                        payload,
+                        tags=allowed_tags,
+                        attributes=allowed_attributes,
+                        protocols=allowed_protocols,
+                        strip=True,
+                        strip_comments=True,
+                    )
+                    lines = cleaned_html.splitlines()
+                    non_empty_lines = [line for line in lines if line.strip()]
+                    self.html = "\n".join(non_empty_lines)
+
                 elif is_body.startswith('text/') or (
                     not is_body and not mailpart.type): # strange email with none mime
                     payload, used_charset = decode_text(mailpart.get_payload(), mailpart.charset, None)
-                    self.text = payload
+                    self.text = html.unescape(payload)
                 else:
                     self.additional_parts.append(mailpart)
         except Exception as e:
@@ -86,7 +103,7 @@ class Email(object):
         from utils.conf import Conf
         threshold = Conf.LONG_BODY_TO_HTML_THRESHOLD or 4096 - len(mail_str) - len(additional_parts) - 128
 
-        if threshold > 0 and isinstance(mainbody, str) and len(html.escape(mainbody)) > threshold:
+        if threshold > 0 and isinstance(mainbody, str) and len(mainbody) > threshold:
             if self.html_raw:
                 html_payload = self.html_raw if isinstance(self.html_raw, str) else str(self.html_raw)
             else:
@@ -99,6 +116,6 @@ class Email(object):
             retfiles.insert(0, ("body.html", "text/html", html_payload.encode("utf-8")))
             mainbody = mainbody[:threshold] + "..."
 
-        mail_str += f'<blockquote expandable>{html.escape(mainbody)}</blockquote>'
+        mail_str += f'<blockquote expandable>\n{mainbody}</blockquote>'
         mail_str += additional_parts
         return mail_str, retfiles
