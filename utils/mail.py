@@ -32,7 +32,8 @@ class Email(object):
                     self.html_raw = payload
                     try:
                         from markdownify import markdownify as md # type: ignore
-                        self.html = md(payload)
+                        self.text = md(payload)
+                        self.html = payload
                     except Exception:
                         logger.warning("cannot use markdownify to convert html, fallback to raw HTML instead.")
                         self.html = payload
