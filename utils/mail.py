@@ -55,6 +55,7 @@ class Email(object):
         mail_str += "Date: %s\n" % self.date
         mail_str += "ID: %s\n" % self.id
         mail_str += "\n"
+        mail_str = html.escape(mail_str)
         mainbody = self.text
         if not self.text or len(self.text) < 20: # not like a real email
             mainbody = self.html or self.text or ''
@@ -68,11 +69,23 @@ class Email(object):
                 mainbody = mainbody.decode('utf-8', errors='replace')
             except Exception:
                 mainbody = str(mainbody)
+
+        additional_parts = ""
+        if self.additional_parts:
+            additional_parts += '\n\nAdditional Parts:'
+            for part in self.additional_parts:
+                part: MailPart
+                part_name = part.filename
+                part_content = part.get_payload()
+                additional_parts += f'\n- {part_name} ({part.type}, size {len(part_content)})'
+                retfiles.append((part_name, part.type, part_content))
+        additional_parts = html.escape(additional_parts)
+
         # Long body: move to .htm attachment, keep short preview in message (only if threshold > 0)
         from utils.conf import Conf
-        threshold = Conf.LONG_BODY_TO_HTML_THRESHOLD
+        threshold = Conf.LONG_BODY_TO_HTML_THRESHOLD or 4096 - len(mail_str) - len(additional_parts) - 128
 
-        if threshold > 0 and isinstance(mainbody, str) and len(mainbody) > threshold:
+        if threshold > 0 and isinstance(mainbody, str) and len(html.escape(mainbody)) > threshold:
             if self.html_raw:
                 html_payload = self.html_raw if isinstance(self.html_raw, str) else str(self.html_raw)
             else:
@@ -84,13 +97,7 @@ class Email(object):
             # Insert body.htm as the first attachment
             retfiles.insert(0, ("body.html", "text/html", html_payload.encode("utf-8")))
             mainbody = mainbody[:threshold] + "..."
-        if self.additional_parts:
-            mainbody += '\n\nAdditional Parts:'
-            for part in self.additional_parts:
-                part: MailPart
-                part_name = part.filename
-                part_content = part.get_payload()
-                mainbody += f'\n- {part_name} ({part.type}, size {len(part_content)})'
-                retfiles.append((part_name, part.type, part_content))
-        mail_str += mainbody
+
+        mail_str += f'<blockquote expandable>{html.escape(mainbody)}</blockquote>'
+        mail_str += additional_parts
         return mail_str, retfiles
