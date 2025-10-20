@@ -59,7 +59,8 @@ class Email(object):
 
                 elif is_body.startswith('text/') or (
                     not is_body and not mailpart.type): # strange email with none mime
-                    payload, used_charset = decode_text(mailpart.get_payload(), mailpart.charset, None)
+                    payload, used_charset=decode_text(mailpart.get_payload(), mailpart.charset, None)
+                    self.text = payload
                 else:
                     self.additional_parts.append(mailpart)
         except Exception as e:
