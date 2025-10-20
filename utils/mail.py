@@ -4,7 +4,6 @@ from pyzmail.parse import MailPart # type: ignore
 import re
 import bleach
 from markdownify import markdownify as md
-import telegramify_markdown
 import html
 from telegram.constants import MAX_MESSAGE_LENGTH
 
@@ -136,5 +135,4 @@ class Email(object):
 
         mail_str += mainbody
         mail_str += additional_parts
-        mail_str = telegramify_markdown.markdownify(mail_str, normalize_whitespace=True)
         return mail_str, retfiles

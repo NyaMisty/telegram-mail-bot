@@ -8,6 +8,7 @@ import time
 from traceback import format_exc
 from typing import Type
 import dataclasses
+import telegramify_markdown
 import typing
 from multiprocessing.pool import ThreadPool
 from telegram import Bot, ParseMode, Update
@@ -336,6 +337,7 @@ def periodic_task() -> None:
                         text = f'''New Email [{emailConf.email_addr}-{idx}]\n'''
                         emailbody, emailfiles = mail.format_email()
                         text += emailbody
+                        text = telegramify_markdown.markdownify(text, normalize_whitespace=True)
                         
                         interceptMail = False
                         for plugin_name, plugin in getAllPlugins():
