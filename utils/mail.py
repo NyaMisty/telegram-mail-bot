@@ -107,7 +107,7 @@ class Email(object):
                 retfiles.append((part_name, part.type, part_content))
 
         # Long body: move to .htm attachment, keep short preview in message (only if threshold > 0)
-        threshold = MAX_MESSAGE_LENGTH - len(mail_str) - len(additional_parts) - 512
+        threshold = MAX_MESSAGE_LENGTH - len(mail_str) - len(additional_parts) - 128
 
         if threshold > 0 and isinstance(mainbody, str) and len(mainbody) > threshold:
             if self.html_raw:
@@ -120,7 +120,16 @@ class Email(object):
                 )
             # Insert body.htm as the first attachment
             retfiles.insert(0, ("body.html", "text/html", html_payload.encode("utf-8")))
-            mainbody = mainbody[:threshold] + "..."
+            # mainbody = mainbody[:threshold] + "..." we need to cut by lines to avoid broken markdown
+            mainbody_lines = []
+            current_length = 0
+            for line in mainbody.splitlines(keepends=True):
+                line_length = len(line)
+                if current_length + line_length > threshold - 4:  # 4 for "...\n"
+                    mainbody_lines.append("...\n")
+                    break
+                mainbody_lines.append(line)
+                current_length += line_length
 
         mail_str += mainbody
         mail_str += additional_parts
