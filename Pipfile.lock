@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "d8339fbd25c0532c3528d768c50331318bfc70daaa03ee1e2814341739e6bb72"
+            "sha256": "3aa6557202a3cbc1dc13e0b6523e44efe9c3e3795c094b09926449bd237118e3"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -184,6 +184,14 @@
             "index": "pypi",
             "version": "==0.13.1"
         },
+        "mistletoe": {
+            "hashes": [
+                "sha256:1630f906e5e4bbe66fdeb4d29d277e2ea515d642bb18a9b49b136361a9818c9d",
+                "sha256:44a477803861de1237ba22e375c6b617690a31d2902b47279d1f8f7ed498a794"
+            ],
+            "markers": "python_version ~= '3.5'",
+            "version": "==1.4.0"
+        },
         "pysocks": {
             "hashes": [
                 "sha256:08e69f092cc6dbe92a0fdd16eeb9b9ffbc13cadfe5ca4c7bd92ffb078b293299",
@@ -264,6 +272,15 @@
             ],
             "markers": "python_version >= '3.8'",
             "version": "==2.6"
+        },
+        "telegramify-markdown": {
+            "hashes": [
+                "sha256:9ac720dacf037fb6b0f4257354de3552b70d68ea0764bdaf96923f9f62d4a21a",
+                "sha256:b0a7aa45b381ff01fc9ec1b19f8eb3f971cb51654238a7290876035325a05e28"
+            ],
+            "index": "pypi",
+            "markers": "python_version >= '3.9'",
+            "version": "==0.5.2"
         },
         "tornado": {
             "hashes": [

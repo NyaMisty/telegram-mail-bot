@@ -347,7 +347,7 @@ def periodic_task() -> None:
 
                         if not interceptMail:
                             safeSendText(
-                                lambda text: updater.bot.send_message(chat_id=chat_id,reply_to_message_id=reply_to_message_id, text=text, parse_mode=ParseMode.HTML), # type: ignore[has-type]
+                                lambda text: updater.bot.send_message(chat_id=chat_id,reply_to_message_id=reply_to_message_id, text=text, parse_mode=ParseMode.MARKDOWN_V2), # type: ignore[has-type]
                                 text,
                             )
                             for filename, filemime, file_content in emailfiles:

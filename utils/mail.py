@@ -4,7 +4,7 @@ from pyzmail.parse import MailPart # type: ignore
 import re
 import bleach
 from markdownify import markdownify as md
-
+import telegramify_markdown
 import html
 
 import logging
@@ -60,7 +60,6 @@ class Email(object):
                 elif is_body.startswith('text/') or (
                     not is_body and not mailpart.type): # strange email with none mime
                     payload, used_charset = decode_text(mailpart.get_payload(), mailpart.charset, None)
-                    self.text = html.unescape(payload)
                 else:
                     self.additional_parts.append(mailpart)
         except Exception as e:
@@ -76,7 +75,6 @@ class Email(object):
         mail_str += "Date: %s\n" % self.date
         mail_str += "ID: %s\n" % self.id
         mail_str += "\n"
-        mail_str = html.escape(mail_str)
         mainbody = self.text
         if not self.text or len(self.text) < 20: # not like a real email
             mainbody = self.html or self.text or ''
@@ -91,6 +89,12 @@ class Email(object):
             except Exception:
                 mainbody = str(mainbody)
 
+        # Add >
+        mainbody_quote = ""
+        for line in mainbody.splitlines():
+            mainbody_quote += '> ' + line + '\n'
+        mainbody = mainbody_quote.rstrip('\n')
+
         additional_parts = ""
         if self.additional_parts:
             additional_parts += '\n\nAdditional Parts:'
@@ -100,7 +104,6 @@ class Email(object):
                 part_content = part.get_payload()
                 additional_parts += f'\n- {part_name} ({part.type}, size {len(part_content)})'
                 retfiles.append((part_name, part.type, part_content))
-        additional_parts = html.escape(additional_parts)
 
         # Long body: move to .htm attachment, keep short preview in message (only if threshold > 0)
         from utils.conf import Conf
@@ -119,6 +122,7 @@ class Email(object):
             retfiles.insert(0, ("body.html", "text/html", html_payload.encode("utf-8")))
             mainbody = mainbody[:threshold] + "..."
 
-        mail_str += f'<blockquote expandable>\n{mainbody}</blockquote>'
+        mail_str += mainbody
         mail_str += additional_parts
+        mail_str = telegramify_markdown.markdownify(mail_str)
         return mail_str, retfiles

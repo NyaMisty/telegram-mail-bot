@@ -15,6 +15,7 @@ pysocks = "*"
 markdownify = "*"
 requests = "*"
 bleach = "*"
+telegramify-markdown = "*"
 
 [dev-packages]
 pylint = "*"
