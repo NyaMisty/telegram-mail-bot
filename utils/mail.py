@@ -106,7 +106,7 @@ class Email(object):
                 retfiles.append((part_name, part.type, part_content))
 
         # Long body: move to .htm attachment, keep short preview in message (only if threshold > 0)
-        threshold = MAX_MESSAGE_LENGTH - len(mail_str) - len(additional_parts) - 128
+        threshold = MAX_MESSAGE_LENGTH - len(mail_str) - len(additional_parts) - 1280 # escape will increase size
 
         if threshold > 0 and isinstance(mainbody, str) and len(mainbody) > threshold:
             if self.html_raw:
