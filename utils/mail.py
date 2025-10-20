@@ -81,15 +81,6 @@ class Email(object):
             mainbody = self.html or self.text or ''
         retfiles: List[Tuple[Optional[str], Optional[str], Optional[bytes]]] = []
 
-        # Normalize body to str
-        if mainbody is None:
-            mainbody = ''
-        elif isinstance(mainbody, bytes):
-            try:
-                mainbody = mainbody.decode('utf-8', errors='replace')
-            except Exception:
-                mainbody = str(mainbody)
-
         # Add >
         mainbody_quote = ""
         last_line_empty = True
