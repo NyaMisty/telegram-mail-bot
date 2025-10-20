@@ -119,7 +119,6 @@ class Email(object):
                 )
             # Insert body.htm as the first attachment
             retfiles.insert(0, ("body.html", "text/html", html_payload.encode("utf-8")))
-            # mainbody = mainbody[:threshold] + "..." we need to cut by lines to avoid broken markdown
             mainbody_lines = []
             current_length = 0
             while current_length < threshold - 4:
@@ -131,7 +130,7 @@ class Email(object):
                     break
                 mainbody_lines.append(line)
                 current_length += len(line) + 1
-            mainbody = '\n'.join(mainbody_lines) + "..."
+            mainbody = '\n'.join(mainbody_lines) + "……"
 
         mail_str += mainbody
         mail_str += additional_parts
