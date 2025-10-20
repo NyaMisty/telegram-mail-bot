@@ -220,7 +220,7 @@ def safeSend(sender, content):
             sender(content)
             break
         except Exception:
-            logger.warning('cannot send tg msg (retry %d)', i, exc_info=True)
+            logger.warning('cannot send tg msg (retry %d)\n%s', i, content, exc_info=True)
         time.sleep(i * 5)
 
 emailClientCache: dict[tuple, EmailClientBase] = {}
