@@ -6,6 +6,7 @@ import bleach
 from markdownify import markdownify as md
 import telegramify_markdown
 import html
+from telegram.constants import MAX_MESSAGE_LENGTH
 
 import logging
 logger = logging.getLogger(__name__)
@@ -106,8 +107,7 @@ class Email(object):
                 retfiles.append((part_name, part.type, part_content))
 
         # Long body: move to .htm attachment, keep short preview in message (only if threshold > 0)
-        from utils.conf import Conf
-        threshold = Conf.LONG_BODY_TO_HTML_THRESHOLD or 4096 - len(mail_str) - len(additional_parts) - 128
+        threshold = MAX_MESSAGE_LENGTH - len(mail_str) - len(additional_parts) - 512
 
         if threshold > 0 and isinstance(mainbody, str) and len(mainbody) > threshold:
             if self.html_raw:
