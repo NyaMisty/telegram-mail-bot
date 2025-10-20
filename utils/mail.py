@@ -123,13 +123,16 @@ class Email(object):
             # mainbody = mainbody[:threshold] + "..." we need to cut by lines to avoid broken markdown
             mainbody_lines = []
             current_length = 0
-            for line in mainbody.splitlines(keepends=True):
-                line_length = len(line)
-                if current_length + line_length > threshold - 4:  # 4 for "...\n"
-                    mainbody_lines.append("...\n")
+            while current_length < threshold - 4:
+                next_newline = mainbody.find('\n', current_length)
+                if next_newline == -1:
+                    next_newline = len(mainbody)
+                line = mainbody[current_length:next_newline]
+                if current_length + len(line) + 1 > threshold:
                     break
                 mainbody_lines.append(line)
-                current_length += line_length
+                current_length += len(line) + 1
+            mainbody = '\n'.join(mainbody_lines) + "..."
 
         mail_str += mainbody
         mail_str += additional_parts
