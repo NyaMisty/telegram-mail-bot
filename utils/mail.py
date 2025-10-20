@@ -91,8 +91,15 @@ class Email(object):
 
         # Add >
         mainbody_quote = ""
+        last_line_empty = True
         for line in mainbody.splitlines():
-            mainbody_quote += '> ' + line + '\n'
+            if line.strip() != "":
+                last_line_empty = False
+                mainbody_quote += '> ' + line + '\n'
+            else:
+                if not last_line_empty:
+                    mainbody_quote += '> \n'
+                last_line_empty = True
         mainbody = mainbody_quote.rstrip('\n')
 
         additional_parts = ""
