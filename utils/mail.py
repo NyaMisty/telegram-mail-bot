@@ -124,5 +124,5 @@ class Email(object):
 
         mail_str += mainbody
         mail_str += additional_parts
-        mail_str = telegramify_markdown.markdownify(mail_str)
+        mail_str = telegramify_markdown.markdownify(mail_str, normalize_whitespace=True)
         return mail_str, retfiles
