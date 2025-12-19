@@ -4,19 +4,20 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-pytz = "*"
+pytz = ">=2025.2"
 tzlocal = "<3.0" # fix Python APScheduler fails: 'Only timezones from the pytz library are supported' error
 python-telegram-bot = "<20.0"
-pyzmail36 = "*"
-APScheduler = "*"
-pysondb = "*"
-python-dotenv = "*"
-pysocks = "*"
-markdownify = "*"
-requests = "*"
+pyzmail36 = "~=1.0"
+APScheduler = "~=3.6"
+pysondb = "~=1.6"
+python-dotenv = "~=1.2"
+pysocks = "~=1.7"
+markdownify = "~=1.2"
+requests = "~=2.32"
 
 [dev-packages]
 pylint = "*"
+ipython = "*"
 
 [requires]
 python_version = "3.11"

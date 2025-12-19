@@ -65,7 +65,10 @@ def testMain(EmailClient: Type[EmailClientBase]):
     num = client.get_mails_count()
     print(client.get_mail_by_index(num))
     print(num)
-    if False:
+    if True:
+        from IPython import embed
+        embed()
+    elif False:
         for i in range(1, num):
             print(client.get_mail_by_index(i))
     elif True:
