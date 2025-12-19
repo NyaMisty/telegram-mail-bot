@@ -250,13 +250,18 @@ def safeSendText(sender, content):
         safeSend(sender, text)
 
 def safeSend(sender, content):
+    from telegram.error import RetryAfter
     for i in range(10):
         try:
             sender(content)
             break
+        except RetryAfter as e:
+            retry_after = e.retry_after + 1
+            logger.warning('Telegram flood control: retry after %d seconds (attempt %d)', retry_after, i)
+            time.sleep(retry_after)
         except Exception:
-            logger.warning('cannot send tg msg (retry %d)', i, exc_info=True)
-        time.sleep(i * 5)
+            logger.warning('cannot send tg msg (retry %d)\n%s', i, content, exc_info=True)
+            time.sleep(i * 5)
 
 emailClientCache: dict[tuple, EmailClientBase] = {}
 def getEmailClient(emailConf: EmailConf) -> EmailClientBase:
