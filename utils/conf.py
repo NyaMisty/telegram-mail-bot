@@ -14,7 +14,9 @@ class Conf:
     ERR_REPORT_INTERVAL: int = 3600
     REQUEST_TIMEOUT: int = 60
     POLL_THREADS: int = 5
+    PREFER_HTML: bool = False
     
+    DEBUG: bool = False
     SAVE_EMAIL_LOGS: bool = False
     ENABLED_PLUGINS: str = ''
     
@@ -51,6 +53,8 @@ class Conf:
                     raise Exception('The value of %s cannot be converted to bool (value=%s), use YES/NO or TRUE/FALSE to represent boolean!' % (field, val))
             else:
                 raise Exception("Invalid config var type %s" % typ)
+            if getconf("DEBUG"):
+                print("Setting %s to %s (type %s)", field, finalVal, typ)
             setattr(cls, field, finalVal)
 
 Conf._reloadConf()

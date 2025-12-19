@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import importlib
 import logging
@@ -5,15 +6,17 @@ import os
 import re
 import socket
 import time
+import dataclasses
 from traceback import format_exc
 from typing import Type
-import dataclasses
-import typing
 from multiprocessing.pool import ThreadPool
+
+import telegramify_markdown
 from telegram import Bot, ParseMode, Update
 from telegram.constants import MAX_MESSAGE_LENGTH
 from telegram.ext import (Updater, CommandHandler, MessageHandler, ConversationHandler, Filters, CallbackContext)
 from pysondb import db as pysondb
+
 from plugins.base_plugin import PluginBase
 from utils import EmailClientBase, EmailClientIMAP, EmailClientPOP3
 from utils.imap_autodetect import get_mail_server
@@ -21,14 +24,20 @@ from utils.oauth2_helper import OAuth2_MS, OAuth2Factory
 from utils.smtpclient import send_email
 from utils.conf import Conf
 from utils.emailconf import emailDB, EmailConf, getEmailConf
+from utils.telegram_helper import tg_md2_escape
+
+if Conf.DEBUG:
+    level = logging.DEBUG
+else:
+    level = logging.INFO
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s:%(lineno)d - %(message)s',
+                    # stream=sys.stdout,
+                    level=level)
 
 updater: Updater = None # type: ignore[assignment]
 
 socket.setdefaulttimeout(10) # avoid imaplib timeout
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s:%(lineno)d - %(message)s',
-                    # stream=sys.stdout,
-                    level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def is_owner(update: Update) -> bool:
@@ -325,9 +334,10 @@ def periodic_task() -> None:
             logger.warning('Cannot parse emailConfDict: %s', emailConfDict, exc_info=True)
             return
         if emailConf.disabled:
+            # logger.debug("email account %s is disabled, skip", email_addr)
             return
-        from multiprocessing import get_context, Process, Manager, Queue
-        ctx = get_context('fork')
+        # from multiprocessing import get_context, Process, Manager, Queue
+        # ctx = get_context('fork')
         # def run_with_timeout(fun, *args, **kwargs):
         #     d = Manager().dict()
         #     def wrapper():
@@ -347,14 +357,17 @@ def periodic_task() -> None:
         #     # finally:
         #     #     pool.close()
         def run_with_timeout(fun, *args, **kwargs):
+            logger.info("running %s with timeout %d", fun.__name__, Conf.REQUEST_TIMEOUT)
             pool = ThreadPool(1)
             fut = pool.apply_async(fun, args=args, kwds=kwargs)
             return fut.get(Conf.REQUEST_TIMEOUT)
         try:
             def do():
+                logger.debug("[%s] connecting email client", email_addr)
                 client = getEmailClient(emailConf)
                 chat_id, reply_to_message_id = emailConf.chat_id.split(',') if ',' in emailConf.chat_id else (emailConf.chat_id, None)
                 new_inbox_num = client.get_mails_count()
+                logger.debug("[%s] cur_inbox_num: %d, new_inbox_num: %d", email_addr, emailConf.inbox_num, new_inbox_num)
                 if new_inbox_num < emailConf.inbox_num:
                     emailDB.updateByQuery({'email_addr': email_addr}, {'inbox_num': new_inbox_num})
                 elif new_inbox_num > emailConf.inbox_num:
@@ -376,7 +389,7 @@ def periodic_task() -> None:
                                     f.write(mail.msg_content)
                         
                         text = f'''New Email [{emailConf.email_addr}-{idx}]\n'''
-                        emailbody, emailfiles = mail.format_email()
+                        emailbody, emailfiles = mail.format_email(prefer_html=Conf.PREFER_HTML)
                         text += emailbody
                         
                         interceptMail = False
@@ -388,10 +401,29 @@ def periodic_task() -> None:
                                 interceptMail = True
 
                         if not interceptMail:
-                            safeSendText(
-                                lambda text: updater.bot.send_message(chat_id=chat_id,reply_to_message_id=reply_to_message_id, text=text), # type: ignore[has-type]
-                                text,
-                            )
+                            # safeSendText(
+                            #     lambda text: updater.bot.send_message(chat_id=chat_id,reply_to_message_id=reply_to_message_id, text=text), # type: ignore[has-type]
+                            #     text,
+                            # )
+                            md = text
+                            boxes = asyncio.run(telegramify_markdown.telegramify(
+                                md, 
+                                interpreters_use=telegramify_markdown.InterpreterChain([
+                                    telegramify_markdown.TextInterpreter(),
+                                ])
+                            ))
+                            for i, box in enumerate(boxes):
+                                assert box.content_type == telegramify_markdown.ContentTypes.TEXT
+                                content = box.content
+                                if len(boxes) - 1 != i:
+                                    content += '\n' + r'_\(\.\.\.\)_'
+                                safeSend(
+                                    lambda text: updater.bot.send_message(
+                                        chat_id=chat_id,reply_to_message_id=reply_to_message_id,
+                                        text=text,
+                                        parse_mode="MarkdownV2"), # type: ignore[has-type]
+                                    content
+                                )
                             for filename, filemime, file_content in emailfiles:
                                 if filemime.startswith('image'):
                                     safeSend(
