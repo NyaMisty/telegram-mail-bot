@@ -97,13 +97,14 @@ def setting_list_email(update: Update, context: CallbackContext) -> None:
             msg += "    (Invalid Email Account: %s)\n" % emailConfDict
             continue
         pwd = emailConf.email_passwd
+        state = '❌' if emailConf.disabled else '✅'
         if hidePassword:
             pwd =  len(emailConf.email_passwd) * '*'
         if hidePassword:
-            msg += f"    Email: `{emailConf.email_addr}`, Server: `{emailConf.server_uri}`, SMTP Server: `{emailConf.smtp_server_uri}`, InboxNum: {emailConf.inbox_num}\n"
+            msg += f"    {state} Email: `{emailConf.email_addr}`, Server: `{emailConf.server_uri}`, SMTP Server: `{emailConf.smtp_server_uri}`, InboxNum: {emailConf.inbox_num}\n"
         else:
             addCommand = f'/add_email {emailConf.email_addr} {emailConf.email_passwd} {emailConf.server_uri} {emailConf.smtp_server_uri}'
-            msg += f"    Command: `{addCommand}`\n"
+            msg += f"    {state} `{addCommand}`\n"
     safeSendText(
         lambda text: update.message.reply_markdown_v2(text), # type: ignore[has-type]
         msg
@@ -210,6 +211,40 @@ def setting_del_email(update: Update, context: CallbackContext) -> None:
     assert emailDB.deleteById(pk)
     update.message.reply_text(f'Successfully deleted email account {email_addr}')
 
+def setting_disable_email(update: Update, context: CallbackContext) -> None:
+    if not is_owner(update):
+        return
+    if not context.args:
+        update.message.reply_text("Invalid command!")
+        return
+    email_addr = context.args[0]
+    
+    emails = emailDB.getByQuery({'email_addr': email_addr})
+    if not emails:
+        update.message.reply_text(f'cannot find email account: {email_addr}')
+        return
+    assert len(emails) == 1
+    pk = emails[0][emailDB.id_fieldname]
+    emailDB.updateById(pk, {'disabled': True})
+    update.message.reply_text(f'Successfully disabled email account {email_addr}')
+
+def setting_enable_email(update: Update, context: CallbackContext) -> None:
+    if not is_owner(update):
+        return
+    if not context.args:
+        update.message.reply_text("Invalid command!")
+        return
+    email_addr = context.args[0]
+    
+    emails = emailDB.getByQuery({'email_addr': email_addr})
+    if not emails:
+        update.message.reply_text(f'cannot find email account: {email_addr}')
+        return
+    assert len(emails) == 1
+    pk = emails[0][emailDB.id_fieldname]
+    emailDB.updateById(pk, {'disabled': False})
+    update.message.reply_text(f'Successfully re-enabled email account {email_addr}')
+
 def safeSendText(sender, content):
     for text in handle_large_text(content):
         safeSend(sender, text)
@@ -283,6 +318,8 @@ def periodic_task() -> None:
             email_addr = emailConf.email_addr
         except Exception:
             logger.warning('Cannot parse emailConfDict: %s', emailConfDict, exc_info=True)
+            return
+        if emailConf.disabled:
             return
         from multiprocessing import get_context, Process, Manager, Queue
         ctx = get_context('fork')
@@ -490,6 +527,8 @@ def main():
     dp.add_handler(CommandHandler("do_oauth", setting_do_oauth))
     dp.add_handler(CommandHandler("add_email", setting_add_email))
     dp.add_handler(CommandHandler("del_email", setting_del_email))
+    dp.add_handler(CommandHandler("disable_email", setting_disable_email))
+    dp.add_handler(CommandHandler("enable_email", setting_enable_email))
     dp.add_handler(MessageHandler(Filters.reply, handle_reply_send_email))
     # TODO: implement send mail
     # dp.add_handler(ConversationHandler(

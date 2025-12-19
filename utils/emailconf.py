@@ -1,16 +1,49 @@
 import dataclasses
+import json
 import pysondb
 
-emailDB = pysondb.getDb("conf/email_accounts.json")
-def doEmailDBMigration():
-    for confDict in emailDB.getAll():
-        curID = confDict.pop('id')
+def getDB():
+    return pysondb.getDb("conf/email_accounts.json")
+emailDB = getDB()
 
-        # migrate001: int chat_id into string
-        if 'chat_id' in confDict:
-            if isinstance(confDict['chat_id'], int):
-                confDict['chat_id'] = str(confDict['chat_id'])
-        emailDB.updateById(curID, confDict)
+def doEmailDBMigration():
+    global emailDB
+    def doMigrationAddField():
+        with open('conf/email_accounts.json', 'r') as f:
+            rawDB = json.load(f)
+        if not ('data' in rawDB and len(rawDB['data']) > 0):
+            return
+        # add fields
+        changed = False
+        if 'disabled' not in rawDB['data'][0]:
+            rawDB['data'][0]['disabled'] = False
+            changed = True
+        
+        if not changed:
+            return
+        data = json.dumps(rawDB, indent=4)
+        with open('conf/email_accounts.json', 'w') as f:
+            f.write(data)
+    
+    def doMigrationData():
+        for confDict in emailDB.getAll():
+            curID = confDict.pop('id')
+
+            # migrate001: int chat_id into string
+            if 'chat_id' in confDict:
+                if isinstance(confDict['chat_id'], int):
+                    confDict['chat_id'] = str(confDict['chat_id'])
+            
+            # migrate002: initialize disabled field
+            if 'disabled' not in confDict:
+                confDict['disabled'] = False
+
+            emailDB.updateById(curID, confDict)
+
+    doMigrationAddField()
+    emailDB = getDB()  # reinitialize the DB after migration
+    doMigrationData()
+
 
 doEmailDBMigration()
 
@@ -22,6 +55,7 @@ class EmailConf():
     smtp_server_uri: str | None
     chat_id: str
     inbox_num: int
+    disabled: bool | None = False
     
     def as_dict(self):
         return dataclasses.asdict(self)
