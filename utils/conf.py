@@ -54,7 +54,7 @@ class Conf:
             else:
                 raise Exception("Invalid config var type %s" % typ)
             if getconf("DEBUG"):
-                print("Setting %s to %s (type %s)", field, finalVal, typ)
+                print("Setting %s to %s (type %s)" % (field, finalVal, typ))
             setattr(cls, field, finalVal)
 
 Conf._reloadConf()
