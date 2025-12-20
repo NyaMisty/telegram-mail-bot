@@ -1,4 +1,6 @@
 import os
+import re
+from typing import Dict, List, Tuple, Optional
 from base64 import b64decode
 import logging
 import imaplib
@@ -10,6 +12,8 @@ from .mail import Email
 
 logger = logging.getLogger(__name__)
 
+_STATUS_KV_RE = re.compile(r"(MESSAGES|UNSEEN|RECENT|UIDNEXT|UIDVALIDITY)\s+(\d+)", re.I)
+
 class EmailClientIMAP(EmailClientBase):
     def __init__(self, email_account, passwd, server_uri=None):
         self.email_account = email_account
@@ -18,6 +22,7 @@ class EmailClientIMAP(EmailClientBase):
             server_uri = 'imaps://imap.'+self.email_account.split('@')[-1]
         self.server_uri: ParseResult = urlparse(server_uri) # type: ignore
         self.server = self.connect()
+        self.current_mailbox = None
 
     def connect(self):
         if self.server_uri.scheme == 'imaps':
@@ -46,13 +51,74 @@ class EmailClientIMAP(EmailClientBase):
         logger.info('imap login ok: %s', statusText)
         return server
 
-    def get_mails_count(self):
-        # Select the mailbox you want to check
-        status, inboxdata = self.server.select("inbox", readonly=True)
+    def _ensure_selected(self, mailbox, force=False):
+        if not force and self.current_mailbox == mailbox:
+            return None
+        status, inboxdata = self.server.select(mailbox, readonly=True)
         assert status == 'OK', f'imap failed to select: {status}'
-        return int(inboxdata[0].decode())
+        self.current_mailbox = mailbox
+        return inboxdata
 
-    def get_mail_by_index(self, index):
+    def _status_mailbox(self, mailbox: str, items: Tuple[str, ...] = ("MESSAGES",)) -> Dict[str, int]:
+        """
+        Ask server for mailbox STATUS without selecting it.
+        Returns a dict like {"MESSAGES": 123, "UNSEEN": 4, "RECENT": 0}
+        """
+        item_list = "(" + " ".join(items) + ")"
+        # quote mailbox name to handle spaces
+        typ, data = self.server.status(f'"{mailbox}"', item_list)
+        if typ != "OK":
+            raise RuntimeError(f"STATUS failed for {mailbox}: {typ} {data}")
+
+        # data example: [b'"INBOX" (MESSAGES 10 UNSEEN 2 RECENT 0)']
+        raw = b" ".join([d for d in data if d])  # flatten
+        text = raw.decode("utf-8", errors="replace")
+
+        out: Dict[str, int] = {}
+        for k, v in _STATUS_KV_RE.findall(text):
+            out[k.upper()] = int(v)
+        return out
+
+    def get_mails_countmap(self, mailboxes: List[str]) -> Dict[str, int]:
+        results: Dict[str, int] = {}
+        for mb in mailboxes:
+            try:
+                # Try STATUS command first
+                st = self._status_mailbox(mb, items=("MESSAGES",))
+                results[mb] = st.get('MESSAGES', 0)
+            except Exception as e:
+                logger.debug("STATUS command failed for %s, falling back to SELECT: %s", mb, e)
+                try:
+                    # Fallback to SELECT
+                    # We force selection to get the latest count
+                    inboxdata = self._ensure_selected(mb, force=True)
+                    results[mb] = int(inboxdata[0].decode())
+                except Exception as e2:
+                    logger.error("Failed to get count for %s: %s", mb, e2)
+                    results[mb] = 0
+        return results
+    
+    def get_mailboxes(self):
+        status, boxes = self.server.list()
+        assert status == 'OK', f'imap failed to list mailboxes: {status}'
+        names = []
+        for box in boxes:
+            # box is bytes
+            s = box.decode()
+            # simple parsing: name is the last part, usually quoted
+            # e.g. (\HasNoChildren) "/" "INBOX"
+            # e.g. (\HasChildren) "/" "My Folder"
+            import shlex
+            try:
+                tokens = shlex.split(s)
+                names.append(tokens[-1])
+            except:
+                logger.warning("failed to parse mailbox name: %s", s)
+        return names
+
+    def get_mail_by_index(self, index, mailbox="inbox"):
+        self._ensure_selected(mailbox)
+        
         status, data = self.server.fetch('%d' % index, '(RFC822)')
         assert status == 'OK', f'imap failed to fetch: {status}'
         mail_lines = data[0][1]

@@ -15,10 +15,13 @@ class EmailClientBase(object):
     def connect(self):
         raise NotImplementedError()
     
-    def get_mails_count(self) -> int:
+    def get_mails_countmap(self, mailboxes: list[str]) -> dict[str, int]:
         raise NotImplementedError()
     
-    def get_mail_by_index(self, index) -> Email:
+    def get_mailboxes(self) -> list[str]:
+        return ["inbox"]
+    
+    def get_mail_by_index(self, index, mailbox="inbox") -> Email:
         raise NotImplementedError()
     
     def refresh_connection(self) -> None:
@@ -62,12 +65,20 @@ def testMain(EmailClient: Type[EmailClientBase]):
         password = new_passwd
 
     client = EmailClient(useraccount, password, server_uri)
-    num = client.get_mails_count()
+    countmap = client.get_mails_countmap(['inbox'])
+    num = countmap.get('inbox', 0)
     print(client.get_mail_by_index(num))
     print(num)
     if True:
-        from IPython import embed
-        embed()
+        def ipy_here():
+            from IPython import embed
+            import inspect
+            f = inspect.currentframe().f_back
+            ns = f.f_globals.copy()
+            ns.update(f.f_locals)          # 拷贝一份，别把 f_locals 当 live locals
+            embed(user_ns=ns)
+
+        ipy_here()
     elif False:
         for i in range(1, num):
             print(client.get_mail_by_index(i))
@@ -75,7 +86,7 @@ def testMain(EmailClient: Type[EmailClientBase]):
         inbox_num = num
         while True:
             client.refresh_connection()
-            new_inbox_num = client.get_mails_count()
+            new_inbox_num = client.get_mails_countmap(['inbox']).get('inbox', 0)
             # print(new_inbox_num, len(client.server.uidl()))
             if new_inbox_num > inbox_num:
                 for idx in range(inbox_num + 1, new_inbox_num + 1):

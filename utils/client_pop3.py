@@ -77,13 +77,25 @@ class EmailClientPOP3(EmailClientBase):
         _, mails, _ = self.server.list()
         return mails
 
-    def get_mails_count(self):
-        # mails = self.get_mails_list()
-        # return len(mails)
-        count, size = self.server.stat()
-        return count
+    def get_mails_countmap(self, mailboxes: list[str]) -> dict[str, int]:
+        results = {}
+        for mailbox in mailboxes:
+            if mailbox.lower() != 'inbox':
+                logger.warning("POP3 only supports INBOX, but %s requested", mailbox)
+                # results[mailbox] = 0
+                continue
+            # mails = self.get_mails_list()
+            # return len(mails)
+            count, size = self.server.stat()
+            results[mailbox] = count
+        return results
+    
+    def get_mailboxes(self):
+        return ["inbox"]
 
-    def get_mail_by_index(self, index):
+    def get_mail_by_index(self, index, mailbox="inbox"):
+        if mailbox.lower() != 'inbox':
+             logger.warning("POP3 only supports INBOX, but %s requested", mailbox)
         resp_status, mail_lines, mail_octets = self.server.retr(index)
         return Email(mail_lines)
 

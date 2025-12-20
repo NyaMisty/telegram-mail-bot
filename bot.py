@@ -23,7 +23,7 @@ from utils.imap_autodetect import get_mail_server
 from utils.oauth2_helper import OAuth2_MS, OAuth2Factory
 from utils.smtpclient import send_email
 from utils.conf import Conf
-from utils.emailconf import emailDB, EmailConf, getEmailConf
+from utils.emailconf import EmailConfBase, emailDB, EmailConf, getEmailConf
 from utils.telegram_helper import tg_md2_escape
 
 if Conf.DEBUG:
@@ -110,7 +110,7 @@ def setting_list_email(update: Update, context: CallbackContext) -> None:
         if hidePassword:
             pwd =  len(emailConf.email_passwd) * '*'
         if hidePassword:
-            msg += f"    {state} Email: `{emailConf.email_addr}`, Server: `{emailConf.server_uri}`, SMTP Server: `{emailConf.smtp_server_uri}`, InboxNum: {emailConf.inbox_num}\n"
+            msg += f"    {state} Email: `{emailConf.email_addr}`, Server: `{emailConf.server_uri}`, SMTP Server: `{emailConf.smtp_server_uri}`, Mailboxes: {list(emailConf.mailbox_offsets.keys())}\n"
         else:
             addCommand = f'/add_email {emailConf.email_addr} {emailConf.email_passwd} {emailConf.server_uri} {emailConf.smtp_server_uri}'
             msg += f"    {state} `{addCommand}`\n"
@@ -180,7 +180,7 @@ def setting_add_email(update: Update, context: CallbackContext) -> None:
         server_uri=email_server,
         smtp_server_uri=email_smtp,
         chat_id=f"{update.message.chat_id},{message_thread_id}",
-        inbox_num=-1,
+        mailbox_offsets={},
     )
     
     logger.info("received setting_email command.")
@@ -191,8 +191,25 @@ def setting_add_email(update: Update, context: CallbackContext) -> None:
         emailConf.email_passwd = email_passwd = new_passwd
 
     with getEmailClient(emailConf) as client:
-        inbox_num = client.get_mails_count()
-    emailConf.inbox_num = inbox_num
+        # initialize mailbox offsets
+        try:
+            mailboxes = client.get_mailboxes()
+        except Exception as e:
+            logger.warning("Failed to list mailboxes: %s", e)
+            mailboxes = ['inbox']
+
+        try:
+            countmap = client.get_mails_countmap(mailboxes)
+        except Exception as e:
+            logger.warning("Failed to get countmap: %s", e)
+            countmap = {}
+            
+        for mb in mailboxes:
+            if mb in countmap:
+                emailConf.mailbox_offsets[mb] = countmap[mb]
+            else:
+                logger.warning("Failed to get count for mailbox %s", mb)
+                emailConf.mailbox_offsets[mb] = 0
     
     if emailDB.getByQuery({'email_addr': email_addr}):
         update.message.reply_text(f"Email {email_addr} is already configured! Overriding...")
@@ -274,7 +291,8 @@ def safeSend(sender, content):
 
 emailClientCache: dict[tuple, EmailClientBase] = {}
 def getEmailClient(emailConf: EmailConf) -> EmailClientBase:
-    cacheKey = tuple(dataclasses.astuple(emailConf))
+    baseConf = EmailConfBase.from_dict(emailConf.as_dict(), ignore_extra_fields=True)
+    cacheKey = dataclasses.astuple(baseConf)
     emailClient: EmailClientBase | None = emailClientCache.get(cacheKey, None)
     if emailClient:
         try:
@@ -366,18 +384,57 @@ def periodic_task() -> None:
                 logger.debug("[%s] connecting email client", email_addr)
                 client = getEmailClient(emailConf)
                 chat_id, reply_to_message_id = emailConf.chat_id.split(',') if ',' in emailConf.chat_id else (emailConf.chat_id, None)
-                new_inbox_num = client.get_mails_count()
-                logger.debug("[%s] cur_inbox_num: %d, new_inbox_num: %d", email_addr, emailConf.inbox_num, new_inbox_num)
-                if new_inbox_num < emailConf.inbox_num:
-                    emailDB.updateByQuery({'email_addr': email_addr}, {'inbox_num': new_inbox_num})
-                elif new_inbox_num > emailConf.inbox_num:
-                    for idx in range(emailConf.inbox_num + 1, new_inbox_num + 1):
-                        try:
-                            mail = client.get_mail_by_index(idx)
-                        except Exception:
-                            logger.warning('cannot retrieve mail %d for %s', idx, emailConf, exc_info=True)
-                            break
+                
+                def iter_new_mails(client, emailConf):
+                    try:
+                        mailboxes = client.get_mailboxes()
+                    except Exception as e:
+                        logger.warning("[%s] failed to list mailboxes, defaulting to inbox: %s", email_addr, e)
+                        mailboxes = ['inbox']
+
+                    try:
+                        countmap = client.get_mails_countmap(mailboxes)
+                    except Exception as e:
+                        logger.warning("[%s] failed to get countmap: %s", email_addr, e)
+                        countmap = {}
+
+                    for mailbox in mailboxes:
+                        cur_inbox_num = emailConf.mailbox_offsets.get(mailbox, -1)
+                        if mailbox not in countmap:
+                             logger.warning("[%s] failed to get count for %s", email_addr, mailbox)
+                             continue
+                        new_inbox_num = countmap[mailbox]
+
+                        logger.debug("[%s] box: %s, cur: %d, new: %d", email_addr, mailbox, cur_inbox_num, new_inbox_num)
                         
+                        if cur_inbox_num == -1:
+                            emailConf.mailbox_offsets[mailbox] = new_inbox_num
+                            emailDB.updateByQuery({'email_addr': email_addr}, {'mailbox_offsets': emailConf.mailbox_offsets})
+                            continue
+
+                        if new_inbox_num < cur_inbox_num:
+                            emailConf.mailbox_offsets[mailbox] = new_inbox_num
+                            emailDB.updateByQuery({'email_addr': email_addr}, {'mailbox_offsets': emailConf.mailbox_offsets})
+                        elif new_inbox_num > cur_inbox_num:
+                            for idx in range(cur_inbox_num + 1, new_inbox_num + 1):
+                                try:
+                                    mail = client.get_mail_by_index(idx, mailbox)
+                                except Exception:
+                                    logger.warning('cannot retrieve mail %d for %s', idx, emailConf, exc_info=True)
+                                    break
+                                yield mailbox, idx, mail
+
+                seen_ids = {}
+                for mailbox, idx, mail in iter_new_mails(client, emailConf):
+                    if mail.id and mail.id in seen_ids:
+                        logger.info('Duplicate email found: %s (in both %s and %s), skipping...', mail.id, mailbox, seen_ids[mail.id])
+                        emailConf.mailbox_offsets[mailbox] = idx
+                        emailDB.updateByQuery({'email_addr': email_addr}, {'mailbox_offsets': emailConf.mailbox_offsets})
+                        continue
+                    if mail.id:
+                        seen_ids[mail.id] = mailbox
+                    
+                    if True:
                         logger.info('Got new email: %s', mail.msg_content)
                         if Conf.SAVE_EMAIL_LOGS:
                             emlFileName= f'logs/{email_addr}/{idx}.eml'
@@ -389,6 +446,9 @@ def periodic_task() -> None:
                                     f.write(mail.msg_content)
                         
                         text = f'''New Email [{emailConf.email_addr}-{idx}]\n'''
+                        if mailbox.lower() != 'inbox':
+                            text = f'''New Email [{emailConf.email_addr}][{mailbox}]\n'''
+                            
                         emailbody, emailfiles = mail.format_email(prefer_html=Conf.PREFER_HTML)
                         text += emailbody
                         
@@ -401,10 +461,6 @@ def periodic_task() -> None:
                                 interceptMail = True
 
                         if not interceptMail:
-                            # safeSendText(
-                            #     lambda text: updater.bot.send_message(chat_id=chat_id,reply_to_message_id=reply_to_message_id, text=text), # type: ignore[has-type]
-                            #     text,
-                            # )
                             md = text
                             boxes = asyncio.run(telegramify_markdown.telegramify(
                                 md, 
@@ -437,7 +493,8 @@ def periodic_task() -> None:
                                     )
                         else:
                             logger.info('Not sending intercepted email message: %s', text)
-                        emailDB.updateByQuery({'email_addr': email_addr}, {'inbox_num': idx})
+                        emailConf.mailbox_offsets[mailbox] = idx
+                        emailDB.updateByQuery({'email_addr': email_addr}, {'mailbox_offsets': emailConf.mailbox_offsets})
             run_with_timeout(do)
         except Exception as e:
             if re.findall(r'\bEOF\b', str(e)):

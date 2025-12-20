@@ -26,46 +26,70 @@ def doEmailDBMigration():
             f.write(data)
     
     def doMigrationData():
-        for confDict in emailDB.getAll():
-            curID = confDict.pop('id')
+        with open('conf/email_accounts.json', 'r') as f:
+            rawDB = json.load(f)
+        
+        if 'data' not in rawDB:
+            return
 
+        changed = False
+        for confDict in rawDB['data']:
             # migrate001: int chat_id into string
             if 'chat_id' in confDict:
                 if isinstance(confDict['chat_id'], int):
                     confDict['chat_id'] = str(confDict['chat_id'])
+                    changed = True
             
             # migrate002: initialize disabled field
             if 'disabled' not in confDict:
                 confDict['disabled'] = False
+                changed = True
+            
+            # migrate003: convert inbox_num to mailbox_offsets
+            if 'inbox_num' in confDict:
+                if 'mailbox_offsets' not in confDict:
+                    confDict['mailbox_offsets'] = {'inbox': confDict['inbox_num']}
+                confDict.pop('inbox_num')
+                changed = True
 
-            emailDB.updateById(curID, confDict)
+        if changed:
+            with open('conf/email_accounts.json', 'w') as f:
+                json.dump(rawDB, f, indent=4)
 
     doMigrationAddField()
-    emailDB = getDB()  # reinitialize the DB after migration
     doMigrationData()
+    emailDB = getDB()  # reinitialize the DB after migration
 
 
 doEmailDBMigration()
 
 @dataclasses.dataclass
-class EmailConf():
+class EmailConfBase():
     email_addr: str
     email_passwd: str
     server_uri: str
     smtp_server_uri: str | None
-    chat_id: str
-    inbox_num: int
-    disabled: bool | None = False
-    
+
     def as_dict(self):
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_dict(cls, emailConfDict):
+    def from_dict(cls, emailConfDict, ignore_extra_fields=False):
         if 'id' in emailConfDict:
             emailConfDict.pop('id')
-        emailConf = EmailConf(**emailConfDict)
+        if ignore_extra_fields:
+            # print(dataclasses.fields(cls))
+            clsFields = [f.name for f in dataclasses.fields(cls)]
+            emailConfDict = {k: v for k, v in emailConfDict.items() if k in clsFields}
+        emailConf = cls(**emailConfDict)
         return emailConf
+
+
+@dataclasses.dataclass
+class EmailConf(EmailConfBase):
+    chat_id: str
+    mailbox_offsets: dict[str, int] = dataclasses.field(default_factory=dict)
+    disabled: bool | None = False
 
 def getEmailConf(email_addr):
     emailConfs = emailDB.getByQuery({'email_addr': email_addr})
