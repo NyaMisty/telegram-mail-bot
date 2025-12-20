@@ -112,7 +112,7 @@ class Email(object):
         mail_str += "Date: %s\n" % self.date
         mail_str += "ID: %s\n" % self.id
         mail_str += "\n"
-        mainbody = _cleanup_text(self.text)
+        mainbody = _cleanup_text(self.text or "")
         retfiles: List[Tuple[Optional[str], Optional[str], Optional[bytes]]] = []
         isStrangeText = not self.text or len(self.text) < 20
         if prefer_html or isStrangeText: # not like a real email or we prefer html
