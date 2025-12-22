@@ -1,5 +1,6 @@
 import dataclasses
 import json
+from typing import Callable
 import pysondb
 
 def getDB():
@@ -8,15 +9,14 @@ emailDB = getDB()
 
 def doEmailDBMigration():
     global emailDB
-    def doMigrationAddField():
+    def doMigration(handler: Callable[[dict], bool]):
         with open('conf/email_accounts.json', 'r') as f:
             rawDB = json.load(f)
         if not ('data' in rawDB and len(rawDB['data']) > 0):
             return
         # add fields
         changed = False
-        if 'disabled' not in rawDB['data'][0]:
-            rawDB['data'][0]['disabled'] = False
+        if handler(rawDB):
             changed = True
         
         if not changed:
@@ -25,13 +25,7 @@ def doEmailDBMigration():
         with open('conf/email_accounts.json', 'w') as f:
             f.write(data)
     
-    def doMigrationData():
-        with open('conf/email_accounts.json', 'r') as f:
-            rawDB = json.load(f)
-        
-        if 'data' not in rawDB:
-            return
-
+    def migrateHandler_chatId(rawDB: dict[str]):
         changed = False
         for confDict in rawDB['data']:
             # migrate001: int chat_id into string
@@ -39,25 +33,31 @@ def doEmailDBMigration():
                 if isinstance(confDict['chat_id'], int):
                     confDict['chat_id'] = str(confDict['chat_id'])
                     changed = True
-            
+        return changed
+
+    def migrateHandler_disabled(rawDB: dict[str]):
+        changed = False
+        for confDict in rawDB['data']:
             # migrate002: initialize disabled field
             if 'disabled' not in confDict:
                 confDict['disabled'] = False
                 changed = True
-            
+        return changed
+
+    def migrateHandler_mailbox(rawDB: dict[str]):
+        changed = False
+        for confDict in rawDB['data']:
             # migrate003: convert inbox_num to mailbox_offsets
             if 'inbox_num' in confDict:
                 if 'mailbox_offsets' not in confDict:
                     confDict['mailbox_offsets'] = {'inbox': confDict['inbox_num']}
                 confDict.pop('inbox_num')
                 changed = True
+        return changed
 
-        if changed:
-            with open('conf/email_accounts.json', 'w') as f:
-                json.dump(rawDB, f, indent=4)
-
-    doMigrationAddField()
-    doMigrationData()
+    doMigration(migrateHandler_chatId)
+    doMigration(migrateHandler_disabled)
+    doMigration(migrateHandler_mailbox)
     emailDB = getDB()  # reinitialize the DB after migration
 
 
