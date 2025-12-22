@@ -388,15 +388,15 @@ def periodic_task() -> None:
                 def iter_new_mails(client, emailConf):
                     try:
                         mailboxes = client.get_mailboxes()
-                    except Exception as e:
-                        logger.warning("[%s] failed to list mailboxes, defaulting to inbox: %s", email_addr, e)
-                        mailboxes = ['inbox']
+                    except Exception:
+                        logger.warning("[%s] failed to list mailboxes", email_addr, exc_info=True)
+                        return
 
                     try:
                         countmap = client.get_mails_countmap(mailboxes)
-                    except Exception as e:
-                        logger.warning("[%s] failed to get countmap: %s", email_addr, e)
-                        countmap = {}
+                    except Exception:
+                        logger.warning("[%s] failed to get countmap: %s", email_addr, exc_info=True)
+                        return
 
                     for mailbox in mailboxes:
                         cur_inbox_num = emailConf.mailbox_offsets.get(mailbox, -1)

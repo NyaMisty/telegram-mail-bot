@@ -161,12 +161,14 @@ class EmailClientIMAP(EmailClientBase):
                     # Parse the name part, handling quotes
                     name_tokens = shlex.split(name_raw)
                     name = name_tokens[0] if name_tokens else name_raw
-                    names.append(name)
                 else:
                     # Fallback to old simple parsing if regex doesn't match
                     tokens = shlex.split(s)
                     name = tokens[-1]
-                    names.append(name)
+                # Specially handle INBOX, because IMAP RFC claims it's case-insensitive
+                if name.lower() == 'inbox':
+                    name = "inbox" # we use "inbox", becasue we also use it as stub name for POP3
+                names.append(name)
             except Exception as e:
                 logger.warning("failed to parse mailbox name: %s, error: %s", s, e)
         return names
