@@ -52,6 +52,10 @@ class EmailClientBase(object):
     #         return False # Propagate
 
 def testMain(EmailClient: Type[EmailClientBase]):
+    logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s:%(lineno)d - %(message)s',
+                    # stream=sys.stdout,
+                    level=logging.DEBUG)
+
     import sys
     import time
     
