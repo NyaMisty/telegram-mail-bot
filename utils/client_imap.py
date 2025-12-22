@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple, Optional
 from base64 import b64decode
 import logging
 import imaplib
+import shlex
 from urllib.parse import ParseResult, urlparse
 
 from .client_base import EmailClientBase, testMain
@@ -59,43 +60,77 @@ class EmailClientIMAP(EmailClientBase):
         self.current_mailbox = mailbox
         return inboxdata
 
-    def _status_mailbox(self, mailbox: str, items: Tuple[str, ...] = ("MESSAGES",)) -> Dict[str, int]:
+    def _status_mailbox(self, mailboxes: List[str], items: Tuple[str, ...] = ("MESSAGES", "UNSEEN")) -> Dict[str, Dict[str, int]]:
         """
-        Ask server for mailbox STATUS without selecting it.
-        Returns a dict like {"MESSAGES": 123, "UNSEEN": 4, "RECENT": 0}
+        Ask server for mailbox STATUS for all mailboxes using LIST-STATUS extension.
+        Returns a dict like {"INBOX": {"MESSAGES": 123, "UNSEEN": 4}}
         """
-        item_list = "(" + " ".join(items) + ")"
-        # quote mailbox name to handle spaces
-        typ, data = self.server.status(f'"{mailbox}"', item_list)
+        status_items = " ".join(items)
+        # LIST "" "*" RETURN (STATUS (items))
+        typ, data = self.server._simple_command(
+            'LIST', '""', '*', 'RETURN', f'(STATUS ({status_items}))'
+        )
         if typ != "OK":
-            raise RuntimeError(f"STATUS failed for {mailbox}: {typ} {data}")
+            raise RuntimeError(f"LIST-STATUS failed: {typ} {data}")
 
-        # data example: [b'"INBOX" (MESSAGES 10 UNSEEN 2 RECENT 0)']
-        raw = b" ".join([d for d in data if d])  # flatten
-        text = raw.decode("utf-8", errors="replace")
-
-        out: Dict[str, int] = {}
-        for k, v in _STATUS_KV_RE.findall(text):
-            out[k.upper()] = int(v)
-        return out
+        results = {}
+        for line in data:
+            if not line: continue
+            if isinstance(line, bytes):
+                s = line.decode("utf-8", errors="replace")
+            else:
+                s = str(line)
+            
+            # Parse response line: ... (STATUS (...))
+            match = re.search(r'^(.*)\s+\(STATUS\s+\((.*)\)\)$', s)
+            if match:
+                mailbox_info = match.group(1)
+                status_info = match.group(2)
+                
+                # Parse mailbox name using simplified logic from get_mailboxes
+                m_box = re.match(r'^\(([^)]*)\)\s+\S+\s+(.*)$', mailbox_info)
+                if m_box:
+                    name_raw = m_box.group(2)
+                    name_tokens = shlex.split(name_raw)
+                    name = name_tokens[0] if name_tokens else name_raw
+                else:
+                    tokens = shlex.split(mailbox_info)
+                    name = tokens[-1]
+                
+                # Parse status values
+                st = {}
+                for k, v in _STATUS_KV_RE.findall(status_info):
+                    st[k.upper()] = int(v)
+                
+                results[name] = st
+                
+        return results
 
     def get_mails_countmap(self, mailboxes: List[str]) -> Dict[str, int]:
         results: Dict[str, int] = {}
+        
+        # Try batch STATUS first
+        try:
+            statuses = self._status_mailbox(mailboxes, items=("MESSAGES",))
+            for mb in mailboxes:
+                if mb in statuses:
+                    results[mb] = statuses[mb].get('MESSAGES', 0)
+                    logger.debug("Retrieved using LIST-STATUS: %d messages for %s", results[mb], mb)
+        except Exception as e:
+            logger.debug("LIST-STATUS command failed, falling back to SELECT loop: %s", e)
+            
         for mb in mailboxes:
+            if mb in results:
+                continue
+                
             try:
-                # Try STATUS command first
-                st = self._status_mailbox(mb, items=("MESSAGES",))
-                results[mb] = st.get('MESSAGES', 0)
-            except Exception as e:
-                logger.debug("STATUS command failed for %s, falling back to SELECT: %s", mb, e)
-                try:
-                    # Fallback to SELECT
-                    # We force selection to get the latest count
-                    inboxdata = self._ensure_selected(mb, force=True)
-                    results[mb] = int(inboxdata[0].decode())
-                except Exception as e2:
-                    logger.error("Failed to get count for %s: %s", mb, e2)
-                    results[mb] = 0
+                # Fallback to SELECT
+                # We force selection to get the latest count
+                inboxdata = self._ensure_selected(mb, force=True)
+                results[mb] = int(inboxdata[0].decode())
+            except Exception as e2:
+                logger.info("Failed to get count for %s, skipping: %s", mb, e2)
+                results[mb] = 0
         return results
     
     def get_mailboxes(self):
@@ -108,12 +143,32 @@ class EmailClientIMAP(EmailClientBase):
             # simple parsing: name is the last part, usually quoted
             # e.g. (\HasNoChildren) "/" "INBOX"
             # e.g. (\HasChildren) "/" "My Folder"
+            logger.debug("Got box: %s", box)
             import shlex
             try:
-                tokens = shlex.split(s)
-                names.append(tokens[-1])
-            except:
-                logger.warning("failed to parse mailbox name: %s", s)
+                # Regex to extract flags inside parentheses at the start
+                # Pattern: (flags) separator name
+                match = re.match(r'^\(([^)]*)\)\s+\S+\s+(.*)$', s)
+                if match:
+                    flags_str = match.group(1)
+                    name_raw = match.group(2)
+                    flags = set(flags_str.split())
+                    
+                    if '\\Noselect' in flags:
+                        logger.debug("Skipping mailbox with \\Noselect: %s", s)
+                        continue
+                        
+                    # Parse the name part, handling quotes
+                    name_tokens = shlex.split(name_raw)
+                    name = name_tokens[0] if name_tokens else name_raw
+                    names.append(name)
+                else:
+                    # Fallback to old simple parsing if regex doesn't match
+                    tokens = shlex.split(s)
+                    name = tokens[-1]
+                    names.append(name)
+            except Exception as e:
+                logger.warning("failed to parse mailbox name: %s, error: %s", s, e)
         return names
 
     def get_mail_by_index(self, index, mailbox="inbox"):
