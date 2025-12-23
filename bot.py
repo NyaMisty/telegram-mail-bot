@@ -420,14 +420,15 @@ def periodic_task() -> None:
                                 try:
                                     mail = client.get_mail_by_index(idx, mailbox)
                                 except Exception:
-                                    logger.warning('cannot retrieve mail %d for %s', idx, emailConf, exc_info=True)
+                                    logger.warning("[%s] cannot retrieve mail %d for %s", email_addr, idx, mailbox, exc_info=True)
                                     break
                                 yield mailbox, idx, mail
 
                 seen_ids = {}
                 for mailbox, idx, mail in iter_new_mails(client, emailConf):
+                    logstr = f'[{email_addr}]["{mailbox}"]'
                     if mail.id and mail.id in seen_ids:
-                        logger.info('Duplicate email found: %s (in both %s and %s), skipping...', mail.id, mailbox, seen_ids[mail.id])
+                        logger.info(f'{logstr} Duplicate email found: %s (in both %s and %s), skipping...', mail.id, mailbox, seen_ids[mail.id])
                         emailConf.mailbox_offsets[mailbox] = idx
                         emailDB.updateByQuery({'email_addr': email_addr}, {'mailbox_offsets': emailConf.mailbox_offsets})
                         continue
@@ -435,7 +436,7 @@ def periodic_task() -> None:
                         seen_ids[mail.id] = mailbox
                     
                     if True:
-                        logger.info('Got new email: %s', mail.msg_content)
+                        logger.info(f'{logstr} Got new email: %s', mail.msg_content)
                         if Conf.SAVE_EMAIL_LOGS:
                             emlFileName= f'logs/{email_addr}/{idx}.eml'
                             os.makedirs(os.path.dirname(emlFileName), exist_ok=True)
@@ -457,7 +458,7 @@ def periodic_task() -> None:
                             plugin: PluginBase
                             ret = plugin.onNewEmail(email_addr, mail)
                             if ret:
-                                logger.info('Email message intercepted by plugin %s', plugin_name)
+                                logger.info(f'{logstr} Email message intercepted by plugin {plugin_name}')
                                 interceptMail = True
 
                         if not interceptMail:
@@ -492,7 +493,7 @@ def periodic_task() -> None:
                                         text
                                     )
                         else:
-                            logger.info('Not sending intercepted email message: %s', text)
+                            logger.info(f'{logstr} Not sending intercepted email message: %s', text)
                         emailConf.mailbox_offsets[mailbox] = idx
                         emailDB.updateByQuery({'email_addr': email_addr}, {'mailbox_offsets': emailConf.mailbox_offsets})
             run_with_timeout(do)
