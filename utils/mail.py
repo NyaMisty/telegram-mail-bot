@@ -58,6 +58,24 @@ def _render_html(html: str) -> str:
     logger.debug("cleaned mdbody: %s", mdbody)
     return mdbody
 
+URL_REGEX = re.compile('''
+    https?://                       # scheme: http:// or https://
+
+    (                               # --- host (one or more labels + TLD) ---
+        (?:[A-Za-z0-9-]+\.)+        # one or more DNS labels ending with dot, e.g. "www." / "a-b."
+        [A-Za-z]{2,63}               # TLD: 2~6 letters (e.g. com, net, museum*)
+    )
+
+    (?:                             # --- optional port ---
+        :                           # colon before port
+        [0-9]{1,5}                  # port: 1~5 digits (0~65535 not range-checked here)
+    )?
+
+    (?:                             # --- optional path/query/fragment part ---
+        /                           # leading slash for the rest
+        [A-Za-z0-9\-._~:/?#[\]%@!$&'()*+,;=]*  # RFC3986-ish allowed chars (incl. %)
+    )?
+''', re.X)
 def _cleanup_text(text: str) -> str:
     """
     This function tries to convert plaintext into markdown.
@@ -66,7 +84,7 @@ def _cleanup_text(text: str) -> str:
     def _replace_url(url: re.Match[str]) -> str:
         domain = extract_domain(url.group(0))
         return f'[🔗{domain}...]({url.group(0)})'
-    text = re.sub(r'''https?:\/\/([A-Za-z0-9-]+\.)+[A-Za-z]{2,6}(\:[0-9]{1,5})?(\/[A-Za-z0-9\-._~:\/?#[\]@!$&'()*+,;=]*)?''', _replace_url, text)
+    text = re.sub(URL_REGEX, _replace_url, text)
     return text
 
 class Email(object):
