@@ -16,6 +16,16 @@ class EmailClientBase(object):
         raise NotImplementedError()
     
     def get_mails_countmap(self, mailboxes: list[str]) -> dict[str, int]:
+        """
+        Get the count of emails in each mailbox.
+
+        Args:
+            mailboxes (list[str]): A list of mailbox names.
+
+        Returns:
+            dict[str, int]: A dictionary mapping mailbox names to email counts. 
+                            Only succeeded mailboxes will be included.
+        """
         raise NotImplementedError()
     
     def get_mailboxes(self) -> list[str]:

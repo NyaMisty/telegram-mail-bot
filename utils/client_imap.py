@@ -55,7 +55,7 @@ class EmailClientIMAP(EmailClientBase):
     def _ensure_selected(self, mailbox, force=False):
         if not force and self.current_mailbox == mailbox:
             return None
-        status, inboxdata = self.server.select(mailbox, readonly=True)
+        status, inboxdata = self.server.select(self.server._quote(mailbox), readonly=True)
         assert status == 'OK', f'imap failed to select: {status}'
         self.current_mailbox = mailbox
         return inboxdata
@@ -130,7 +130,7 @@ class EmailClientIMAP(EmailClientBase):
                 results[mb] = int(inboxdata[0].decode())
             except Exception as e2:
                 logger.info("Failed to get count for %s, skipping: %s", mb, e2)
-                results[mb] = 0
+                logger.debug("Exception:", exc_info=True)
         return results
     
     def get_mailboxes(self):

@@ -81,9 +81,7 @@ class EmailClientPOP3(EmailClientBase):
         results = {}
         for mailbox in mailboxes:
             if mailbox.lower() != 'inbox':
-                logger.warning("POP3 only supports INBOX, but %s requested", mailbox)
-                # results[mailbox] = 0
-                continue
+                raise ValueError(f"POP3 only supports INBOX, but {mailbox} requested")
             # mails = self.get_mails_list()
             # return len(mails)
             count, size = self.server.stat()
@@ -95,7 +93,7 @@ class EmailClientPOP3(EmailClientBase):
 
     def get_mail_by_index(self, index, mailbox="inbox"):
         if mailbox.lower() != 'inbox':
-             logger.warning("POP3 only supports INBOX, but %s requested", mailbox)
+            raise ValueError(f"POP3 only supports INBOX, but {mailbox} requested")
         resp_status, mail_lines, mail_octets = self.server.retr(index)
         return Email(mail_lines)
 
