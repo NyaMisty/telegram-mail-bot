@@ -1,6 +1,8 @@
 import logging
 import time
 import re
+from typing import Any, Optional, Type, TypeVar
+import uuid
 import requests
 import urllib.parse
 from base64 import b64encode
@@ -47,6 +49,11 @@ class OAuth2_Base():
     redirect_uri: str
     
     suffix_list: list[str]
+    
+    def __init__(self, additional_data: Optional[str]=None) -> None:
+        # Providers may use additional_data to customize the properties like client_id
+        pass
+
     @classmethod
     def can_handle_email(self, email):
         for suffix in self.suffix_list:
@@ -58,7 +65,7 @@ class OAuth2_Base():
     def get_login_url(self, email):
         raise NotImplementedError()
     
-    @classmethod
+    # @classmethod
     def refresh_token_from_code(self, code):
 
         data = {
@@ -91,7 +98,7 @@ class OAuth2_Base():
             raise RuntimeError('invalid server return body: %s' % response.text)
         return refresh_token, token, expire
     
-    @classmethod
+    # @classmethod
     def access_token_from_refresh_token(self, refresh_token):
         data = {
             'client_id': self.client_id,
@@ -122,17 +129,17 @@ class OAuth2_Base():
         return token, expire_time
 
 class OAuth2Factory():
-    PROVIDERS_DICT: dict[str, OAuth2_Base] = {}
+    PROVIDERS_DICT: dict[str, Type[OAuth2_Base]] = {}
     
     @classmethod
     def register_provider(self, provider):
         self.PROVIDERS_DICT[provider.name] = provider
 
     @classmethod
-    def get_provider(self, name):
+    def get_provider(self, name, additional_data=None):
         if name not in self.PROVIDERS_DICT:
             raise RuntimeError('invalid provider name %s, available providers: %s' % (name, list(self.PROVIDERS_DICT.keys())))
-        return self.PROVIDERS_DICT[name]
+        return self.PROVIDERS_DICT[name](additional_data=additional_data)
 
     @classmethod
     def detect_provider(self, email):
@@ -142,15 +149,15 @@ class OAuth2Factory():
 
     @classmethod
     def token_from_string(self, s) -> Token | None:
-        # s should have format token:{provider}:{refresh_token}
+        # s should have format token:{provider}:{refresh_token} or token:{provider}:{refresh_token}:::{additional_data}
         if not s.startswith('token:'):
             return None
-        m = re.match(r'^token:(?P<provider_name>.*?):(?P<refresh_token>.*)$', s)
+        m = re.match(r'^token:(?P<provider_name>.*?):(?P<refresh_token>.*?)(?::::(?P<additional_data>.*?))*$', s)
         if not m:
             raise ValueError('invalid token string: %s, should have format token:{provider}:{refresh_token}' % s)
-        provider_name, refresh_token = m.groups()
+        provider_name, refresh_token, additional_data = m.groups()
         
-        provider = self.get_provider(provider_name)
+        provider = self.get_provider(provider_name, additional_data)
         return TokenStore.get(refresh_token, provider.access_token_from_refresh_token)
     
     @classmethod
@@ -187,6 +194,13 @@ class OAuth2_MS(OAuth2_Base):
     client_id = '55797b5d-1e14-44bc-a7b3-52575eb1d6ef'
     redirect_uri = 'https://localhost'
     suffix_list = ['@outlook.com', '@hotmail.com', '@msn.com', '@live.com']
+    
+    def __init__(self, additional_data: Optional[str]=None) -> None:
+        if additional_data:
+            # ensure additional data is uuid format
+            self.client_id = str(uuid.UUID(additional_data))
+        super().__init__(additional_data=additional_data)
+
     @classmethod
     def get_login_url(self, email):
         return f'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?response_type=code&client_id={self.client_id}&redirect_uri=https%3A%2F%2Flocalhost&scope=https%3A%2F%2Foutlook.office.com%2FIMAP.AccessAsUser.All+https%3A%2F%2Foutlook.office.com%2FPOP.AccessAsUser.All+https%3A%2F%2Foutlook.office.com%2FSMTP.Send+offline_access'

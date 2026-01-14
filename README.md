@@ -32,6 +32,10 @@ Example for OAuth:
         ```
         /add_email john.doe@hotmail.com token:ms:XXXXXXXX pop3s://outlook.office365.com smtp+starttls://smtp-mail.outlook.com
         ```
+    - Using refresh token with custom client_id (beware there's 3 ":" before client_id):
+        ```
+        /add_email john.doe@hotmail.com token:ms:XXXXXXXX:::XXXXXXXXXXXX-XXXX-XXXX-... pop3s://outlook.office365.com smtp+starttls://smtp-mail.outlook.com
+        ```
 - MS Organization Account: Login using same URL as above
     - Using authorization code:
         ```
