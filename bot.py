@@ -110,14 +110,31 @@ def setting_list_email(update: Update, context: CallbackContext) -> None:
         if hidePassword:
             pwd =  len(emailConf.email_passwd) * '*'
         if hidePassword:
-            msg += f"    {state} Email: `{emailConf.email_addr}`, Server: `{emailConf.server_uri}`, SMTP Server: `{emailConf.smtp_server_uri}`, Mailboxes: {list(emailConf.mailbox_offsets.keys())}\n"
+            msg += f"    {state} Email: `{emailConf.email_addr}`, Server: `{emailConf.server_uri}`, SMTP Server: `{emailConf.smtp_server_uri}`, Mailboxes: `{list(emailConf.mailbox_offsets.keys())}`\n"
         else:
             addCommand = f'/add_email {emailConf.email_addr} {emailConf.email_passwd} {emailConf.server_uri} {emailConf.smtp_server_uri}'
             msg += f"    {state} `{addCommand}`\n"
-    safeSendText(
-        lambda text: update.message.reply_markdown_v2(text), # type: ignore[has-type]
-        msg
-    )
+    # safeSendText(
+    #     lambda text: update.message.reply_markdown_v2(text), # type: ignore[has-type]
+    #     msg
+    # )
+    boxes = asyncio.run(telegramify_markdown.telegramify(
+        msg, 
+        interpreters_use=telegramify_markdown.InterpreterChain([
+            telegramify_markdown.TextInterpreter(),
+        ])
+    ))
+    for i, box in enumerate(boxes):
+        assert box.content_type == telegramify_markdown.ContentTypes.TEXT
+        content = box.content
+        if not content:
+            continue
+        if len(boxes) - 1 != i:
+            content += '\n' + r'_\(\.\.\.\)_'
+        safeSend(
+            lambda text: update.message.reply_markdown_v2(text),
+            content
+        )
 
 def setting_do_oauth(update: Update, context: CallbackContext):
     if not is_owner(update):
