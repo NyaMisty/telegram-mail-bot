@@ -42,7 +42,7 @@ def getGVMailInfo(email_addr):
 
 GV_BODY_PREFIX = "bro hey it's weekend again, the sh*tting work is making me mad, but thanks god it's over now."
 
-def sendReplyGV(emailConf, peer_number, peer_mail):
+def sendReplyGV(emailConf, peer_number, peer_mail, reply_email_id):
     logger.info("send SMS to %s (%s)", peer_number, peer_mail)
     subject = 'Re: New text message from %s' % peer_number
     RANDOM_FIRST_NAMES = ['Jane', 'Mark', 'Jennifer', 'Judy', 'Tom', 'Jerry', 'Alice', 'Bob', 'Eve', 'Mallory']
@@ -52,7 +52,7 @@ def sendReplyGV(emailConf, peer_number, peer_mail):
         sender_email=emailConf.email_addr, 
         password=emailConf.email_passwd,
         receiver_email=peer_mail,
-        subject=subject, body=body)
+        subject=subject, body=body, reply_email_id=reply_email_id)
 
 def gv_periodic_task():
     logger.info('Running gv_periodic_task!')
@@ -72,12 +72,22 @@ def gv_periodic_task():
                 logger.info('email %s last send time %s, skipping', email_addr, datetime.datetime.fromtimestamp(gvMail.last_send_time))
                 continue
             logger.info(f"send SMS for GV {email_addr} (number %s)", gvMail.gv_number)
-            for peer_number, peer_mail in gvMail.email_peers.items():
+            for peer_number, peer_info in gvMail.email_peers.items():
+                parts = peer_info.split("|")
+                if len(parts) == 1:
+                    peer_mail = parts[0]
+                    reply_email_id = None
+                elif len(parts) == 2:
+                    peer_mail, reply_email_id = parts
+                else:
+                    logger.warning("invalid peer_info format: %s", peer_info)
+                    continue
+
                 if peer_number in gvNumbersDict:
                     logger.info(f"    send SMS for GV {email_addr} (number %s) -> %s", gvMail.gv_number, peer_number)
-                    sendReplyGV(emailConf, peer_number, peer_mail)
+                    sendReplyGV(emailConf, peer_number, peer_mail, reply_email_id)
                 
-            gvMail.last_send_time = time.time()
+            gvMail.last_send_time = int(time.time())
             gvMailsDB.updateByQuery({'email_addr': email_addr}, dataclasses.asdict(gvMail))
     except:
         logger.exception('Error in gv_periodic_task', exc_info=True)
@@ -109,8 +119,9 @@ class PluginGV(PluginBase):
             logger.info('Invalid @txt.voice.google.com domain email: %s', sender_email)
             return False
         
+        reply_email_id = email.id
         receiver_number, sender_number, _ = m.groups()
-        logger.info('Got GV SMS email %s -> %s', receiver_number, sender_number)
+        logger.info('Got GV SMS email %s -> %s, ID: %s', receiver_number, sender_number, reply_email_id)
         assert receiver_number.startswith('1') and sender_number.startswith('1')
         sender_gv_number = sender_number[1:]
         
@@ -125,13 +136,13 @@ class PluginGV(PluginBase):
 
         assert receiver_number == '1' + gvMail.gv_number
 
-        logger.info('Adding GV Peer for %s (%s -> %s)', email_addr, sender_gv_number, sender_email)
-        gvMail.email_peers[sender_gv_number] = sender_email
+        logger.info('Adding GV Peer for %s (%s -> %s, ID: %s)', email_addr, sender_gv_number, sender_email, reply_email_id)
+        gvMail.email_peers[sender_gv_number] = sender_email + "|" + reply_email_id
         gvMailsDB.updateByQuery({"email_addr": email_addr}, {"email_peers": gvMail.email_peers}) 
         
         if not needIntercept and 'broadcaster' in gvMail.gv_tags: # don't send reply when it's already autoreply
             emailConf = getEmailConf(email_addr)
-            sendReplyGV(emailConf, sender_gv_number, sender_email)
+            sendReplyGV(emailConf, sender_gv_number, sender_email, reply_email_id)
             needIntercept = True
         return needIntercept
 
