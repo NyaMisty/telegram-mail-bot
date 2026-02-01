@@ -157,6 +157,12 @@ class EmailClientIMAP(EmailClientBase):
                     if '\\Noselect' in flags:
                         logger.debug("Skipping mailbox with \\Noselect: %s", s)
                         continue
+                    if '\\Sent' in flags:
+                        logger.debug("Skipping mailbox with \\Sent: %s", s)
+                        continue
+                    if '\\All' in flags:
+                        logger.debug("Skipping mailbox with \\All Mail: %s", s)
+                        continue
                         
                     # Parse the name part, handling quotes
                     name_tokens = shlex.split(name_raw)
