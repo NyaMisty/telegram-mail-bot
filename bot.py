@@ -602,7 +602,14 @@ def handle_reply_send_email(update: Update, context: CallbackContext):
         return
 
     original_message = update.message.reply_to_message.text
-    email, mail_id, from_email = re.findall(r'^.*?\[(.*?)-(\d+)\]\n[\S\s]+?From: .*?(\S+)\n', original_message)[0]
+    email, mail_id, from_name, from_email, email_id = re.findall(
+        r"""
+        ^.*?\[(?P<email>.*?)-(?P<email_no>\d+)\]\n # New Email [abc@a.com-1234]
+        [\S\s]+?                                   # subjects, etc.
+        From:\s(?P<from_name>.*?)<*(?P<from_email>\S+)>*\n                            # `From: xxx a@b.com` or `From: xxx <...>`
+        [\S\s]+?                                   # date, etc.
+        ID:\s(?P<email_id>.*?)\S*\n                # ID: <...>
+        """, original_message, flags=re.VERBOSE)[0]
     reply_message = update.message.text
     subject, split, body = reply_message.partition('\n\n')
     if split != '\n\n':
@@ -618,7 +625,8 @@ def handle_reply_send_email(update: Update, context: CallbackContext):
         sender_email=emailConf.email_addr, 
         password=emailConf.email_passwd, 
         receiver_email=from_email, 
-        subject=subject, body=body)
+        subject=subject, body=body,
+        reply_email_id=email_id)
     update.message.reply_text(f"Successfully sent the email from {email} to {from_email} with subject {subject}")
 
 def main():

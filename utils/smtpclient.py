@@ -9,13 +9,16 @@ from .oauth2_helper import OAuth2Factory
 
 logger = logging.getLogger(__name__)
 
-def send_email(smtp_server_uri, sender_email, password, receiver_email, subject, body):
+def send_email(smtp_server_uri, sender_email, password, receiver_email, subject, body, reply_email_id=None):
 
     # 创建一个多部分的邮件容器
     msg = MIMEMultipart()
     msg['From'] = sender_email
     msg['To'] = receiver_email
     msg['Subject'] = subject
+    if reply_email_id is not None:
+        msg['In-Reply-To'] = reply_email_id
+        msg['References'] = reply_email_id
 
     # 添加邮件正文
     msg.attach(MIMEText(body, 'plain'))
