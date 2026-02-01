@@ -157,10 +157,10 @@ class EmailClientIMAP(EmailClientBase):
                     if '\\Noselect' in flags:
                         logger.debug("Skipping mailbox with \\Noselect: %s", s)
                         continue
-                    if '\\Sent' in flags:
-                        logger.debug("Skipping mailbox with \\Sent: %s", s)
+                    if '\\Sent' in flags or '\\Drafts' in flags: # skip Sent and Drafts folders
+                        logger.debug("Skipping mailbox with \\Sent or \\Drafts: %s", s)
                         continue
-                    if '\\All' in flags:
+                    if '\\All' in flags: # have to also skip \\All because it's including Sent & Drafts & etc.
                         logger.debug("Skipping mailbox with \\All Mail: %s", s)
                         continue
                         
