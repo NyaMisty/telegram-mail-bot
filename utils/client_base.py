@@ -73,7 +73,7 @@ def testMain(EmailClient: Type[EmailClientBase]):
     password = sys.argv[2]
     server_uri = sys.argv[3]
     
-    new_passwd = OAuth2Factory.code_to_token(password)
+    new_passwd = OAuth2Factory.code_to_token(useraccount, password)
     if new_passwd:
         print('changed code into token', new_passwd)
         password = new_passwd

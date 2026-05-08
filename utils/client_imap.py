@@ -39,7 +39,7 @@ class EmailClientIMAP(EmailClientBase):
         # indicating the connection is set up properly
         logger.info('imap server welcome: %s', server.welcome.decode('utf8'))
         # authenticating
-        token = OAuth2Factory.token_from_string(self.password)
+        token = OAuth2Factory.token_from_string(self.email_account, self.password)
         if token is None:
             # normal basic auth
             status, statusText = server.login(self.email_account, self.password)

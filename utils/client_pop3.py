@@ -62,7 +62,7 @@ class EmailClientPOP3(EmailClientBase):
         # indicating the connection is set up properly
         logger.info('pop3 server welcome: %s', server.getwelcome().decode('utf8'))
         # authenticating
-        token: Token = OAuth2Factory.token_from_string(self.password)
+        token: Token = OAuth2Factory.token_from_string(self.email_account, self.password)
         if token is None:
             # normal basic auth
             server.user(self.email_account)

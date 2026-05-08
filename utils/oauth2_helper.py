@@ -12,19 +12,24 @@ class Token():
     def __init__(self, refresh_token, refresher):
         self.refresh_token = refresh_token
         self.refresher = refresher
-        
+
         self.access_token = None
         self.access_token_expire = 0
         if not self.access_token_expire:
             self.access_token_expire = 0
-    
+
     def getToken(self):
         if time.time() - 600 > self.access_token_expire: # TTL less than 10min
-            new_token, new_token_expire = self.refresher(self.refresh_token)
+            ret = self.refresher(self.refresh_token)
+            new_token, new_token_expire = ret[:2]
+            new_refresh_token = ret[2] if len(ret) > 2 else None
+            if new_refresh_token and new_refresh_token != self.refresh_token:
+                TokenStore.move(self.refresh_token, new_refresh_token, self)
+                self.refresh_token = new_refresh_token
             logger.info('refreshed token %s, next expiration %s' % (self.refresh_token, new_token_expire))
             self.access_token, self.access_token_expire = new_token, new_token_expire
         return self.access_token
-    
+
     def getSasl(self, username, raw=False):
         saslBody = f"user={username}".encode() + b"\x01" + f"auth=Bearer {self.getToken()}".encode() +  b"\x01\x01"
         if not raw:
@@ -35,12 +40,18 @@ class Token():
 
 class TokenStore():
     store: dict[str, Token] = {}
-    
+
     @classmethod
     def get(self, refresh_token: str, refresher) -> Token:
         if refresh_token not in self.store:
             self.store[refresh_token] = Token(refresh_token, refresher)
-        return self.store[refresh_token]    
+        return self.store[refresh_token]
+
+    @classmethod
+    def move(self, old_refresh_token: str, new_refresh_token: str, token: Token):
+        if old_refresh_token in self.store:
+            self.store.pop(old_refresh_token, None)
+        self.store[new_refresh_token] = token
 
 class OAuth2_Base():
     name: str
@@ -49,10 +60,11 @@ class OAuth2_Base():
     redirect_uri: str
     
     suffix_list: list[str]
-    
-    def __init__(self, additional_data: Optional[str]=None) -> None:
+
+    def __init__(self, email_addr: str, additional_data: Optional[str]=None, **kwargs) -> None:
         # Providers may use additional_data to customize the properties like client_id
-        pass
+        self.email_addr = email_addr
+        self.additional_data = additional_data
 
     @classmethod
     def can_handle_email(self, email):
@@ -136,10 +148,10 @@ class OAuth2Factory():
         self.PROVIDERS_DICT[provider.name] = provider
 
     @classmethod
-    def get_provider(self, name, additional_data=None):
+    def get_provider(self, email_addr, name, additional_data=None):
         if name not in self.PROVIDERS_DICT:
             raise RuntimeError('invalid provider name %s, available providers: %s' % (name, list(self.PROVIDERS_DICT.keys())))
-        return self.PROVIDERS_DICT[name](additional_data=additional_data)
+        return self.PROVIDERS_DICT[name](email_addr=email_addr, additional_data=additional_data)
 
     @classmethod
     def detect_provider(self, email):
@@ -148,20 +160,30 @@ class OAuth2Factory():
                 return name
 
     @classmethod
-    def token_from_string(self, s) -> Token | None:
+    def token_from_string(self, email_addr, s) -> Token | None:
         # s should have format token:{provider}:{refresh_token} or token:{provider}:{refresh_token}:::{additional_data}
         if not s.startswith('token:'):
             return None
-        m = re.match(r'^token:(?P<provider_name>.*?):(?P<refresh_token>.*?)(?::::(?P<additional_data>.*?))*$', s)
-        if not m:
-            raise ValueError('invalid token string: %s, should have format token:{provider}:{refresh_token}' % s)
-        provider_name, refresh_token, additional_data = m.groups()
-        
-        provider = self.get_provider(provider_name, additional_data)
+        provider_name, refresh_token, additional_data = self.parse_token_parts(s)
+
+        provider = self.get_provider(email_addr, provider_name, additional_data)
         return TokenStore.get(refresh_token, provider.access_token_from_refresh_token)
+
+    @classmethod
+    def parse_token_parts(self, s) -> tuple[str, str, str | None]:
+        if not s.startswith('token:'):
+            raise ValueError('invalid token string: %s, should have format token:{provider}:{refresh_token}' % s)
+        body = s[len('token:'):]
+        provider_name, sep, token_data = body.partition(':')
+        if not sep:
+            raise ValueError('invalid token string: %s, should have format token:{provider}:{refresh_token}' % s)
+        refresh_token, _, additional_data = token_data.partition(':::')
+        if not provider_name or not refresh_token:
+            raise ValueError('invalid token string: %s, should have format token:{provider}:{refresh_token}' % s)
+        return provider_name, refresh_token, additional_data or None
     
     @classmethod
-    def code_to_token(self, s) -> str | None:
+    def code_to_token(self, email_addr, s) -> str | None:
         if not s.startswith('code:'):
             return None
         # s should have format token:{provider}:{refresh_token}
@@ -169,13 +191,56 @@ class OAuth2Factory():
         if not m:
             raise ValueError('invalid code string: %s, should have format token:{provider}:{refresh_token}' % s)
         provider_name, code = m.groups()
-        
-        provider = self.get_provider(provider_name)
+
+        provider = self.get_provider(email_addr, provider_name)
         refresh_token, token, token_expire = provider.refresh_token_from_code(code)
         t = TokenStore.get(refresh_token, provider.access_token_from_refresh_token)
         t.access_token = token
         t.access_token_expire = token_expire
         return f'token:{provider_name}:{refresh_token}'
+
+class OAuth2_Proton(OAuth2_Base):
+    name = 'proton'
+    token_uri = ''
+    client_id = ''
+    redirect_uri = ''
+    suffix_list = []
+
+    def _update_stored_refresh_token(self, old_refresh_token: str, new_refresh_token: str):
+        email_addr = self.email_addr
+        if not email_addr or not self.additional_data:
+            return
+        from .emailconf import emailDB
+
+        email_confs = emailDB.getByQuery({'email_addr': email_addr})
+        if not email_confs:
+            return
+        for email_conf in email_confs:
+            old_passwd = email_conf.get('email_passwd')
+            if not old_passwd:
+                continue
+            provider_name, refresh_token, additional_data = OAuth2Factory.parse_token_parts(old_passwd)
+            if provider_name != 'proton' or refresh_token != old_refresh_token or additional_data != self.additional_data:
+                continue
+            new_passwd = f'token:proton:{new_refresh_token}:::{self.additional_data}'
+            emailDB.updateByQuery({'email_addr': email_addr}, {'email_passwd': new_passwd})
+            break
+
+    def access_token_from_refresh_token(self, refresh_token):
+        from protonmail_client import ProtonIOSLogin, parse_proton_token
+
+        token_data = parse_proton_token(f'token:proton:{refresh_token}:::{self.additional_data or ""}')
+        login = ProtonIOSLogin()
+        ret = login.refresh_access_token(token_data.uid, token_data.refresh_token, token_data.access_token)
+        new_refresh_token = ret.get('RefreshToken') or refresh_token
+        access_token = ret['AccessToken']
+        expire_time = time.time() + ret.get('ExpiresIn', 3600) - 10
+        if new_refresh_token != refresh_token:
+            self._update_stored_refresh_token(refresh_token, new_refresh_token)
+            return access_token, expire_time, new_refresh_token
+        return access_token, expire_time
+
+OAuth2Factory.register_provider(OAuth2_Proton)
 
 class OAuth2_MS(OAuth2_Base):
     name = 'ms'
@@ -195,11 +260,11 @@ class OAuth2_MS(OAuth2_Base):
     redirect_uri = 'https://localhost'
     suffix_list = ['@outlook.com', '@hotmail.com', '@msn.com', '@live.com']
     
-    def __init__(self, additional_data: Optional[str]=None) -> None:
+    def __init__(self, email_addr: str, additional_data: Optional[str]=None, **kwargs) -> None:
         if additional_data:
             # ensure additional data is uuid format
             self.client_id = str(uuid.UUID(additional_data))
-        super().__init__(additional_data=additional_data)
+        super().__init__(email_addr=email_addr, additional_data=additional_data)
 
     @classmethod
     def get_login_url(self, email):

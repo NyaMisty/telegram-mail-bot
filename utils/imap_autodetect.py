@@ -11,5 +11,7 @@ def get_mail_server(email_addr):
             return 'imaps://imap.rambler.ru', 'smtps://imap.rambler.ru'
         case "gmx.com":
             return 'imaps://imap.gmx.com', 'smtps://mail.gmx.com'
+        case "protonmail.com" | "pm.me" | "proton.me" | "protonmail.ch":
+            return 'proton://', None
     
     return None

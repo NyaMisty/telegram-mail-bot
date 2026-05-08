@@ -14,8 +14,12 @@ python-dotenv = "~=1.2"
 pysocks = "~=1.7"
 markdownify = "~=1.2"
 requests = "~=2.32"
+bcrypt = "~=4.0"
+PGPy = "~=0.6"
 bleach = "~=6.3.0"
 telegramify-markdown = {git = "https://github.com/NyaMisty/telegramify-markdown"}
+protonmail-client-python = {git = "https://github.com/NyaMisty/protonmail-client-python"}
+setuptools = "<82"
 
 [dev-packages]
 pylint = "*"

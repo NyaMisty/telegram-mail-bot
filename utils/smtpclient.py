@@ -39,7 +39,7 @@ def send_email(smtp_server_uri, sender_email, password, receiver_email, subject,
         server.set_debuglevel(100)
 
     try:
-        token = OAuth2Factory.token_from_string(password)
+        token = OAuth2Factory.token_from_string(sender_email, password)
         if not token:
             server.login(sender_email, password)  # 登录SMTP服务器
         else:

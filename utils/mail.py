@@ -101,6 +101,7 @@ class Email(object):
             self.sender = msg.get_address('from')
             self.date = msg.get_decoded_header('date', '')
             self.id = msg.get_decoded_header('message-id', '')
+            # self.headers = {k: msg.get_decoded_header(k, '') for k in msg.keys()}
 
             self.text = None
             self.html = None
@@ -126,7 +127,7 @@ class Email(object):
 
     def format_email(self, prefer_html=False):
         mail_str = "Subject: %s\n" % self.subject
-        mail_str += "From: %s %s\n" % self.sender
+        mail_str += "From: %s <%s>\n" % self.sender
         mail_str += "Date: %s\n" % self.date
         mail_str += "ID: %s\n" % self.id
         mail_str += "\n"

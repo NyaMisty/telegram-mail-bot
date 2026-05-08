@@ -18,7 +18,7 @@ from telegram.ext import (Updater, CommandHandler, MessageHandler, ConversationH
 from pysondb import db as pysondb
 
 from plugins.base_plugin import PluginBase
-from utils import EmailClientBase, EmailClientIMAP, EmailClientPOP3
+from utils import EmailClientBase, EmailClientIMAP, EmailClientPOP3, EmailClientProton
 from utils.imap_autodetect import get_mail_server
 from utils.oauth2_helper import OAuth2_MS, OAuth2Factory
 from utils.smtpclient import send_email
@@ -153,7 +153,7 @@ def setting_do_oauth(update: Update, context: CallbackContext):
             update.message.reply_text("Cannot autodetect oauth provider for email %s, please specify the provider." % email_addr)
             return
 
-    oauthProvider = OAuth2Factory.get_provider(oauth_type)
+    oauthProvider = OAuth2Factory.get_provider(email_addr, oauth_type)
     url = oauthProvider.get_login_url(email_addr)
     update.message.reply_markdown_v2(f"OAuth2 Provider: {oauth_type}\n\nUsing this url to login: `{url}`\nOr [click here]({url})")
     return
@@ -180,7 +180,7 @@ def setting_add_email(update: Update, context: CallbackContext) -> None:
             return
         email_server, email_smtp = ret
     
-    if not email_server.startswith('imap') and not email_server.startswith('pop3'):
+    if not email_server.startswith('imap') and not email_server.startswith('pop3') and not email_server.startswith('proton'):
         update.message.reply_text(f"invalid server: {email_server}")
         return
     if email_smtp and not email_smtp.startswith('smtp'):
@@ -202,7 +202,7 @@ def setting_add_email(update: Update, context: CallbackContext) -> None:
     
     logger.info("received setting_email command.")
     
-    new_passwd = OAuth2Factory.code_to_token(s=email_passwd)
+    new_passwd = OAuth2Factory.code_to_token(email_addr, email_passwd)
     if new_passwd:
         update.message.reply_text(f"Exchanged refresh_token {new_passwd} from {email_passwd} for email {email_addr}, Rewriting password~")
         emailConf.email_passwd = email_passwd = new_passwd
@@ -325,6 +325,8 @@ def getEmailClient(emailConf: EmailConf) -> EmailClientBase:
         EmailClient = EmailClientPOP3
     elif emailConf.server_uri.startswith('imap'):
         EmailClient = EmailClientIMAP
+    elif emailConf.server_uri.startswith('proton'):
+        EmailClient = EmailClientProton
     else:
         raise Exception(f"invalid email server_uri: {emailConf.server_uri}")
     
