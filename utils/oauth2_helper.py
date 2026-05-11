@@ -226,17 +226,16 @@ class OAuth2_Proton(OAuth2_Base):
     redirect_uri = ''
     suffix_list = []
 
-    def token_identifier(self, refresh_token: str) -> str:
-        from protonmail_client import parse_proton_token
+    def token_identifier(self, token_payload: str) -> str:
+        from .client_protonmail import parse_proton_key_password_token
 
-        token_data = parse_proton_token(f'token:proton:{refresh_token}:::{self.additional_data or ""}')
+        token_data, _ = parse_proton_key_password_token(f'token:proton:{token_payload}')
         return f'{self.name}:{self.email_addr}:{token_data.auth_time}'
 
     def access_token_from_refresh_token(self, token_payload):
-        from .client_protonmail import NotifyingProtonAuthManager
-        from protonmail_client import parse_proton_token
+        from .client_protonmail import NotifyingProtonAuthManager, parse_proton_key_password_token
 
-        token_data = parse_proton_token(f'token:proton:{token_payload}:::{self.additional_data or ""}')
+        token_data, _ = parse_proton_key_password_token(f'token:proton:{token_payload}')
         auth_manager = NotifyingProtonAuthManager(self.email_addr, token_payload, token_data)
         sess = requests.Session()
         try:

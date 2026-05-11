@@ -2,6 +2,7 @@ import base64
 import logging
 import secrets
 import time
+from dataclasses import dataclass
 from http.cookies import SimpleCookie
 from requests import HTTPError, RequestException
 
@@ -15,13 +16,38 @@ from .oauth2_helper import OAuth2Factory, TokenStore
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ProtonKeyPasswordTokenData:
+    uid: str
+    access_token: str
+    refresh_token: str
+    key_password: str
+    auth_time: str
+    auth_mode: str = 'ios'
+
+
+def parse_proton_key_password_token(passwd: str) -> tuple[ProtonKeyPasswordTokenData, str]:
+    provider_name, token_payload, additional_data = OAuth2Factory.parse_token_parts(passwd)
+    if provider_name != 'proton' or additional_data:
+        raise ValueError('invalid Proton token, expected token:proton:<uid>.<access_token>.<refresh_token>.<auth_time>---<key_password>')
+    token_data = parse_proton_token(passwd)
+    return ProtonKeyPasswordTokenData(
+        uid=token_data.uid,
+        access_token=token_data.access_token,
+        refresh_token=token_data.refresh_token,
+        key_password=token_data.key_password,
+        auth_time=token_data.auth_time,
+        auth_mode=token_data.auth_mode,
+    ), token_payload
+
+
 class NotifyingProtonAuthManager:
-    def __init__(self, email_account: str, token_payload: str, token_data):
+    def __init__(self, email_account: str, token_payload: str, token_data: ProtonKeyPasswordTokenData):
         self.uid = token_data.uid
         self.access_token = token_data.access_token
         self.refresh_token = token_data.refresh_token
+        self.key_password = token_data.key_password
         self.auth_time = token_data.auth_time
-        self.login_password = token_data.login_password
         self.auth_mode = token_data.auth_mode
         self.token_identifier = f'proton:{email_account}:{token_data.auth_time}'
         self.token_payload = token_payload
@@ -87,9 +113,9 @@ class NotifyingProtonAuthManager:
             raise
 
     def current_token(self) -> str:
-        if not self.uid or not self.access_token or not self.refresh_token or not self.auth_time or not self.login_password:
-            raise RuntimeError('ProtonMail token requires uid, access_token, refresh_token, auth_time and login_password')
-        return build_proton_token(self.uid, self.access_token, self.refresh_token, self.auth_time, self.login_password)
+        if not self.uid or not self.access_token or not self.refresh_token or not self.key_password or not self.auth_time:
+            raise RuntimeError('ProtonMail token requires uid, access_token, refresh_token, key_password and auth_time')
+        return build_proton_token(self.uid, self.access_token, self.refresh_token, self.auth_time, self.key_password)
 
 
 class ProtonCookieAuthManager:
@@ -98,9 +124,9 @@ class ProtonCookieAuthManager:
     refresh_token = None
     auth_time = None
 
-    def __init__(self, cookie: str, login_password: str | None):
+    def __init__(self, cookie: str, key_password: str | None):
         self.cookie = cookie
-        self.login_password = login_password
+        self.key_password = key_password
         self.auth_mode = 'cookie'
 
     def apply_headers(self, session):
@@ -141,8 +167,7 @@ class EmailClientProton(EmailClientBase):
             logger.debug('Creating Proton cookie client')
             return self._create_cookie_client(passwd[len('proton:cookie:'):], decode_base64=False)
         try:
-            token_data = parse_proton_token(passwd)
-            _, token_payload, _ = OAuth2Factory.parse_token_parts(passwd)
+            token_data, token_payload = parse_proton_key_password_token(passwd)
             auth_manager = NotifyingProtonAuthManager(self.email_account, token_payload, token_data)
             client = ProtonMailClient(self.email_account, server_uri=self.server_uri, auth_manager=auth_manager)
             logger.debug('ProtonMailClient ready: api_url=%s uid=%s auth_mode=%s access_present=%s refresh_prefix=%s',
@@ -166,9 +191,9 @@ class EmailClientProton(EmailClientBase):
             cookie_header = base64.urlsafe_b64decode((cookie_header + padding).encode()).decode()
         extras = pieces[1:]
         if not extras:
-            raise ValueError('proton cookie token must include login_password')
-        login_password = extras[0] if len(extras) == 1 else ':'.join(extras[1:])
-        auth_manager = ProtonCookieAuthManager(cookie_header, login_password)
+            raise ValueError('proton cookie token must include key_password')
+        key_password = extras[0] if len(extras) == 1 else ':'.join(extras[1:])
+        auth_manager = ProtonCookieAuthManager(cookie_header, key_password)
         return ProtonMailClient(
             self.email_account,
             server_uri=self.server_uri,

@@ -444,7 +444,7 @@
         },
         "protonmail-client-python": {
             "git": "https://github.com/NyaMisty/protonmail-client-python",
-            "ref": "f957d56cc6a9a967bd5646dbc4be9c36a925cf56"
+            "ref": "06013355cce04569397c905cc891629053aea7f5"
         },
         "pyasn1": {
             "hashes": [
