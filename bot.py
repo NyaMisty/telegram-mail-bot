@@ -20,7 +20,7 @@ from pysondb import db as pysondb
 from plugins.base_plugin import PluginBase
 from utils import EmailClientBase, EmailClientIMAP, EmailClientPOP3, EmailClientProton
 from utils.imap_autodetect import get_mail_server
-from utils.oauth2_helper import OAuth2_MS, OAuth2Factory
+from utils.oauth2_helper import OAuth2_MS, OAuth2Factory, TokenStore
 from utils.smtpclient import send_email
 from utils.conf import Conf
 from utils.emailconf import EmailConfBase, emailDB, EmailConf, getEmailConf
@@ -39,6 +39,27 @@ updater: Updater = None # type: ignore[assignment]
 socket.setdefaulttimeout(10) # avoid imaplib timeout
 
 logger = logging.getLogger(__name__)
+
+def on_oauth_token_update(token_identifier, old_access_token, new_access_token, old_token_payload, new_token_payload):
+    provider_name, _, identity = token_identifier.partition(':')
+    email_addr, _, _ = identity.partition(':')
+    if not provider_name or not email_addr or not new_token_payload:
+        return
+    email_confs = emailDB.getByQuery({'email_addr': email_addr})
+    for email_conf in email_confs:
+        old_passwd = email_conf.get('email_passwd')
+        if not old_passwd or not old_passwd.startswith(f'token:{provider_name}:'):
+            continue
+        parsed_provider, current_token_payload, additional_data = OAuth2Factory.parse_token_parts(old_passwd)
+        if parsed_provider != provider_name or current_token_payload != old_token_payload:
+            continue
+        new_passwd = f'token:{provider_name}:{new_token_payload}'
+        if additional_data:
+            new_passwd = f'{new_passwd}:::{additional_data}'
+        emailDB.updateByQuery({'email_addr': email_addr}, {'email_passwd': new_passwd})
+        break
+
+TokenStore.token_update_callback = on_oauth_token_update
 
 def is_owner(update: Update) -> bool:
     if update.message:

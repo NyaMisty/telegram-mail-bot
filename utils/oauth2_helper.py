@@ -1,7 +1,7 @@
 import logging
 import time
 import re
-from typing import Any, Optional, Type, TypeVar
+from typing import Optional, Type
 import uuid
 import requests
 import urllib.parse
@@ -9,25 +9,39 @@ from base64 import b64encode
 logger = logging.getLogger(__name__)
 
 class Token():
-    def __init__(self, refresh_token, refresher):
+    def __init__(self, token_identifier, refresh_token, refresher, access_token=None):
+        self.token_identifier = token_identifier
         self.refresh_token = refresh_token
         self.refresher = refresher
 
-        self.access_token = None
+        self.access_token = access_token
         self.access_token_expire = 0
+        if self.access_token:
+            self.access_token_expire = time.time() + 3600 - 10
         if not self.access_token_expire:
             self.access_token_expire = 0
 
+    def set_refresh_token(self, refresh_token, access_token=None):
+        old_access_token = self.access_token
+        old_refresh_token = self.refresh_token
+        if refresh_token:
+            self.refresh_token = refresh_token
+        if access_token:
+            self.access_token = access_token
+        if old_access_token != self.access_token or old_refresh_token != self.refresh_token:
+            TokenStore.notify_token_update(self.token_identifier, old_access_token, self.access_token, old_refresh_token, self.refresh_token)
+
     def getToken(self):
         if time.time() - 600 > self.access_token_expire: # TTL less than 10min
-            ret = self.refresher(self.refresh_token)
-            new_token, new_token_expire = ret[:2]
-            new_refresh_token = ret[2] if len(ret) > 2 else None
-            if new_refresh_token and new_refresh_token != self.refresh_token:
-                TokenStore.move(self.refresh_token, new_refresh_token, self)
-                self.refresh_token = new_refresh_token
+            old_access_token = self.access_token
+            old_refresh_token = self.refresh_token
+            new_token, new_token_expire, new_refresh_token = self.refresher(self.refresh_token)
+            self.access_token = new_token
+            self.access_token_expire = new_token_expire
+            self.refresh_token = new_refresh_token or self.refresh_token
+            if old_access_token != self.access_token or old_refresh_token != self.refresh_token:
+                TokenStore.notify_token_update(self.token_identifier, old_access_token, self.access_token, old_refresh_token, self.refresh_token)
             logger.info('refreshed token %s, next expiration %s' % (self.refresh_token, new_token_expire))
-            self.access_token, self.access_token_expire = new_token, new_token_expire
         return self.access_token
 
     def getSasl(self, username, raw=False):
@@ -39,19 +53,20 @@ class Token():
 
 
 class TokenStore():
+    # token_identifier is the stable cache key for one auth session. Providers with fixed refresh tokens should include email + token payload; rotating-token providers should include email + a stable auth marker.
     store: dict[str, Token] = {}
+    token_update_callback = None
 
     @classmethod
-    def get(self, refresh_token: str, refresher) -> Token:
-        if refresh_token not in self.store:
-            self.store[refresh_token] = Token(refresh_token, refresher)
-        return self.store[refresh_token]
+    def get(self, token_identifier: str, refresh_token: str, refresher, access_token=None) -> Token:
+        if token_identifier not in self.store:
+            self.store[token_identifier] = Token(token_identifier, refresh_token, refresher, access_token)
+        return self.store[token_identifier]
 
     @classmethod
-    def move(self, old_refresh_token: str, new_refresh_token: str, token: Token):
-        if old_refresh_token in self.store:
-            self.store.pop(old_refresh_token, None)
-        self.store[new_refresh_token] = token
+    def notify_token_update(self, token_identifier: str, old_access_token, new_access_token, old_refresh_token, new_refresh_token):
+        if self.token_update_callback:
+            self.token_update_callback(token_identifier, old_access_token, new_access_token, old_refresh_token, new_refresh_token)
 
 class OAuth2_Base():
     name: str
@@ -65,6 +80,9 @@ class OAuth2_Base():
         # Providers may use additional_data to customize the properties like client_id
         self.email_addr = email_addr
         self.additional_data = additional_data
+
+    def token_identifier(self, refresh_token: str) -> str:
+        return f'{self.name}:{self.email_addr}:{refresh_token}'
 
     @classmethod
     def can_handle_email(self, email):
@@ -136,9 +154,10 @@ class OAuth2_Base():
             r = response.json()
             token = r['access_token']
             expire_time = time.time() + r['expires_in'] - 10 # 10 seconds safety bar
+            new_refresh_token = r.get('refresh_token')
         except Exception:
             raise RuntimeError('invalid server return body: %s' % response.text)
-        return token, expire_time
+        return token, expire_time, new_refresh_token
 
 class OAuth2Factory():
     PROVIDERS_DICT: dict[str, Type[OAuth2_Base]] = {}
@@ -161,26 +180,26 @@ class OAuth2Factory():
 
     @classmethod
     def token_from_string(self, email_addr, s) -> Token | None:
-        # s should have format token:{provider}:{refresh_token} or token:{provider}:{refresh_token}:::{additional_data}
         if not s.startswith('token:'):
             return None
-        provider_name, refresh_token, additional_data = self.parse_token_parts(s)
+        provider_name, token_payload, additional_data = self.parse_token_parts(s)
 
         provider = self.get_provider(email_addr, provider_name, additional_data)
-        return TokenStore.get(refresh_token, provider.access_token_from_refresh_token)
+        token_identifier = provider.token_identifier(token_payload)
+        return TokenStore.get(token_identifier, token_payload, provider.access_token_from_refresh_token)
 
     @classmethod
     def parse_token_parts(self, s) -> tuple[str, str, str | None]:
         if not s.startswith('token:'):
-            raise ValueError('invalid token string: %s, should have format token:{provider}:{refresh_token}' % s)
+            raise ValueError('invalid token string: %s, should have format token:{provider}:{token_payload}' % s)
         body = s[len('token:'):]
         provider_name, sep, token_data = body.partition(':')
         if not sep:
-            raise ValueError('invalid token string: %s, should have format token:{provider}:{refresh_token}' % s)
-        refresh_token, _, additional_data = token_data.partition(':::')
-        if not provider_name or not refresh_token:
-            raise ValueError('invalid token string: %s, should have format token:{provider}:{refresh_token}' % s)
-        return provider_name, refresh_token, additional_data or None
+            raise ValueError('invalid token string: %s, should have format token:{provider}:{token_payload}' % s)
+        token_payload, _, additional_data = token_data.partition(':::')
+        if not provider_name or not token_payload:
+            raise ValueError('invalid token string: %s, should have format token:{provider}:{token_payload}' % s)
+        return provider_name, token_payload, additional_data or None
     
     @classmethod
     def code_to_token(self, email_addr, s) -> str | None:
@@ -194,7 +213,8 @@ class OAuth2Factory():
 
         provider = self.get_provider(email_addr, provider_name)
         refresh_token, token, token_expire = provider.refresh_token_from_code(code)
-        t = TokenStore.get(refresh_token, provider.access_token_from_refresh_token)
+        token_identifier = provider.token_identifier(refresh_token)
+        t = TokenStore.get(token_identifier, refresh_token, provider.access_token_from_refresh_token, token)
         t.access_token = token
         t.access_token_expire = token_expire
         return f'token:{provider_name}:{refresh_token}'
@@ -206,39 +226,27 @@ class OAuth2_Proton(OAuth2_Base):
     redirect_uri = ''
     suffix_list = []
 
-    def _update_stored_refresh_token(self, old_refresh_token: str, new_refresh_token: str):
-        email_addr = self.email_addr
-        if not email_addr or not self.additional_data:
-            return
-        from .emailconf import emailDB
-
-        email_confs = emailDB.getByQuery({'email_addr': email_addr})
-        if not email_confs:
-            return
-        for email_conf in email_confs:
-            old_passwd = email_conf.get('email_passwd')
-            if not old_passwd:
-                continue
-            provider_name, refresh_token, additional_data = OAuth2Factory.parse_token_parts(old_passwd)
-            if provider_name != 'proton' or refresh_token != old_refresh_token or additional_data != self.additional_data:
-                continue
-            new_passwd = f'token:proton:{new_refresh_token}:::{self.additional_data}'
-            emailDB.updateByQuery({'email_addr': email_addr}, {'email_passwd': new_passwd})
-            break
-
-    def access_token_from_refresh_token(self, refresh_token):
-        from protonmail_client import ProtonIOSLogin, parse_proton_token
+    def token_identifier(self, refresh_token: str) -> str:
+        from protonmail_client import parse_proton_token
 
         token_data = parse_proton_token(f'token:proton:{refresh_token}:::{self.additional_data or ""}')
-        login = ProtonIOSLogin()
-        ret = login.refresh_access_token(token_data.uid, token_data.refresh_token, token_data.access_token)
-        new_refresh_token = ret.get('RefreshToken') or refresh_token
-        access_token = ret['AccessToken']
-        expire_time = time.time() + ret.get('ExpiresIn', 3600) - 10
-        if new_refresh_token != refresh_token:
-            self._update_stored_refresh_token(refresh_token, new_refresh_token)
-            return access_token, expire_time, new_refresh_token
-        return access_token, expire_time
+        return f'{self.name}:{self.email_addr}:{token_data.auth_time}'
+
+    def access_token_from_refresh_token(self, token_payload):
+        from .client_protonmail import NotifyingProtonAuthManager
+        from protonmail_client import parse_proton_token
+
+        token_data = parse_proton_token(f'token:proton:{token_payload}:::{self.additional_data or ""}')
+        auth_manager = NotifyingProtonAuthManager(self.email_addr, token_payload, token_data)
+        sess = requests.Session()
+        try:
+            auth_manager.apply_headers(sess)
+            auth_manager.refresh(sess, 'https://mail.proton.me/api')
+            expire_time = time.time() + 3600 - 10
+            _, new_token_payload, _ = OAuth2Factory.parse_token_parts(auth_manager.current_token())
+            return auth_manager.access_token, expire_time, new_token_payload
+        finally:
+            sess.close()
 
 OAuth2Factory.register_provider(OAuth2_Proton)
 
