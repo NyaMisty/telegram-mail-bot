@@ -1,14 +1,12 @@
 import base64
 import logging
-from requests import HTTPError
+import secrets
+import time
+from http.cookies import SimpleCookie
+from requests import HTTPError, RequestException
 
-from protonmail_client import (
-    ProtonBearerAuthManager,
-    ProtonCookieAuthManager,
-    ProtonMailClient,
-    ProtonTokenData,
-    parse_proton_token,
-)
+from protonmail_client import ProtonMailClient, build_proton_token, parse_proton_token
+from protonmail_client.auth import APP_VERSION, USER_AGENT, redact_api_data
 
 from .client_base import EmailClientBase, testMain
 from .mail import Email
@@ -17,21 +15,113 @@ from .oauth2_helper import OAuth2Factory, TokenStore
 logger = logging.getLogger(__name__)
 
 
-class NotifyingProtonBearerAuthManager(ProtonBearerAuthManager):
-    def __init__(self, email_account: str, token_payload: str, token_data: ProtonTokenData):
-        super().__init__(token_data)
+class NotifyingProtonAuthManager:
+    def __init__(self, email_account: str, token_payload: str, token_data):
+        self.uid = token_data.uid
+        self.access_token = token_data.access_token
+        self.refresh_token = token_data.refresh_token
+        self.auth_time = token_data.auth_time
+        self.login_password = token_data.login_password
+        self.auth_mode = token_data.auth_mode
         self.token_identifier = f'proton:{email_account}:{token_data.auth_time}'
         self.token_payload = token_payload
 
+    def apply_headers(self, session):
+        session.headers.update({
+            'x-pm-appversion': APP_VERSION,
+            'user-agent': USER_AGENT,
+        })
+        if self.uid:
+            session.headers['x-pm-uid'] = self.uid
+        if self.access_token:
+            session.headers['authorization'] = f'Bearer {self.access_token}'
+
     def refresh(self, session, api_url: str) -> bool:
+        if not self.uid or not self.refresh_token:
+            raise RuntimeError('ProtonMail refresh requires uid and refresh_token')
+        old_auth = session.headers.get('authorization')
         old_access_token = self.access_token
         old_token_payload = self.token_payload
-        ret = super().refresh(session, api_url)
-        _, new_token_payload, _ = OAuth2Factory.parse_token_parts(self.current_token())
-        self.token_payload = new_token_payload
-        if old_access_token != self.access_token or old_token_payload != new_token_payload:
-            TokenStore.notify_token_update(self.token_identifier, old_access_token, self.access_token, old_token_payload, new_token_payload)
-        return ret
+        data = {
+            'UID': self.uid,
+            'RefreshToken': self.refresh_token,
+            'ResponseType': 'token',
+            'GrantType': 'refresh_token',
+            'RedirectURI': 'https://protonmail.ch',
+            'State': secrets.token_urlsafe(32),
+        }
+        if self.access_token:
+            data['AccessToken'] = self.access_token
+        try:
+            last_error = None
+            for attempt in range(3):
+                try:
+                    response = session.post(f'{api_url}/auth/v4/refresh', json=data)
+                    break
+                except RequestException as e:
+                    last_error = e
+                    logger.warning('ProtonMail refresh network error, retry %d/3', attempt + 1)
+                    if attempt == 2:
+                        raise
+                    time.sleep(1)
+            else:
+                raise last_error
+            if old_auth and response.status_code >= 400:
+                session.headers['authorization'] = old_auth
+            response.raise_for_status()
+            ret = response.json()
+            if ret.get('Code') != 1000:
+                raise RuntimeError(f'ProtonMail refresh error: {redact_api_data(ret)}')
+            self.uid = ret.get('UID') or self.uid
+            self.access_token = ret['AccessToken']
+            self.refresh_token = ret.get('RefreshToken') or self.refresh_token
+            self.apply_headers(session)
+            _, new_token_payload, _ = OAuth2Factory.parse_token_parts(self.current_token())
+            self.token_payload = new_token_payload
+            if old_access_token != self.access_token or old_token_payload != new_token_payload:
+                TokenStore.notify_token_update(self.token_identifier, old_access_token, self.access_token, old_token_payload, new_token_payload)
+            return True
+        except Exception:
+            if old_auth:
+                session.headers['authorization'] = old_auth
+            raise
+
+    def current_token(self) -> str:
+        if not self.uid or not self.access_token or not self.refresh_token or not self.auth_time or not self.login_password:
+            raise RuntimeError('ProtonMail token requires uid, access_token, refresh_token, auth_time and login_password')
+        return build_proton_token(self.uid, self.access_token, self.refresh_token, self.auth_time, self.login_password)
+
+
+class ProtonCookieAuthManager:
+    uid = None
+    access_token = None
+    refresh_token = None
+    auth_time = None
+
+    def __init__(self, cookie: str, login_password: str | None):
+        self.cookie = cookie
+        self.login_password = login_password
+        self.auth_mode = 'cookie'
+
+    def apply_headers(self, session):
+        session.headers.update({
+            'x-pm-appversion': 'web-mail@5.0.112.4',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+        })
+        session.headers['cookie'] = self.cookie
+        cookie = SimpleCookie()
+        cookie.load(self.cookie)
+        for name in cookie.keys():
+            if name.startswith('AUTH-'):
+                self.uid = name[len('AUTH-'):]
+                session.headers['x-pm-uid'] = self.uid
+                break
+
+    def refresh(self, session, api_url: str) -> bool:
+        return False
+
+    def current_token(self) -> str:
+        raise RuntimeError('Cookie auth cannot be exported as OAuth Proton token')
 
 
 class EmailClientProton(EmailClientBase):
@@ -53,7 +143,7 @@ class EmailClientProton(EmailClientBase):
         try:
             token_data = parse_proton_token(passwd)
             _, token_payload, _ = OAuth2Factory.parse_token_parts(passwd)
-            auth_manager = NotifyingProtonBearerAuthManager(self.email_account, token_payload, token_data)
+            auth_manager = NotifyingProtonAuthManager(self.email_account, token_payload, token_data)
             client = ProtonMailClient(self.email_account, server_uri=self.server_uri, auth_manager=auth_manager)
             logger.debug('ProtonMailClient ready: api_url=%s uid=%s auth_mode=%s access_present=%s refresh_prefix=%s',
                          getattr(client, 'api_url', None), getattr(client, 'uid', None), getattr(client, 'auth_mode', None),
@@ -77,19 +167,8 @@ class EmailClientProton(EmailClientBase):
         extras = pieces[1:]
         if not extras:
             raise ValueError('proton cookie token must include login_password')
-        if len(extras) == 1:
-            refresh_token = None
-            login_password = extras[0]
-        else:
-            refresh_token = extras[0] or None
-            login_password = ':'.join(extras[1:])
-        token_data = ProtonTokenData(
-            cookie=cookie_header,
-            refresh_token=refresh_token,
-            login_password=login_password,
-            auth_mode='cookie',
-        )
-        auth_manager = ProtonCookieAuthManager(token_data)
+        login_password = extras[0] if len(extras) == 1 else ':'.join(extras[1:])
+        auth_manager = ProtonCookieAuthManager(cookie_header, login_password)
         return ProtonMailClient(
             self.email_account,
             server_uri=self.server_uri,
